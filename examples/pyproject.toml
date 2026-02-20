@@ -1,0 +1,16 @@
+[project]
+name = "strands-ai-functions-examples"
+version = "0.1.0"
+dependencies = [
+    "pandas>=3.0.0",
+    "plotly>=6.5.2",
+    "sqlglot>=28.3.0",
+    "strands-agents-tools>=0.2.20",
+    "strands-ai-functions",
+    "sympy>=1.14.0",
+    "yfinance>=1.1.0",
+    "pypandoc>=1.16.2",
+]
+
+[tool.uv.sources]
+strands-ai-functions = { workspace = true }

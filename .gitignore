@@ -1,0 +1,11 @@
+.idea/
+
+*.pyc
+__pycache__/
+.hypothesis/
+dist/
+uv.lock
+
+# MkDocs
+site/
+.cache/
