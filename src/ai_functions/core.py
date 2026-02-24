@@ -14,7 +14,8 @@ import functools
 import inspect
 import logging
 import types
-from typing import Any, Callable, Sequence, Unpack, get_type_hints
+from collections.abc import Callable, Sequence
+from typing import Any, Unpack, get_type_hints
 
 import pydantic
 from pydantic import BaseModel, ConfigDict, Field, create_model

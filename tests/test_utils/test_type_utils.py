@@ -3,7 +3,7 @@
 Tests for is_pydantic_model and is_json_serializable_type functions.
 """
 
-from typing import Dict, List, Optional
+from typing import Optional
 
 from hypothesis import given, settings
 from hypothesis import strategies as st
@@ -97,11 +97,11 @@ class TestIsJsonSerializableType:
 
     def test_returns_true_for_typed_list(self):
         """Test is_json_serializable_type returns True for List[str]."""
-        assert is_json_serializable_type(List[str]) is True
+        assert is_json_serializable_type(list[str]) is True
 
     def test_returns_true_for_typed_dict(self):
         """Test is_json_serializable_type returns True for Dict[str, int]."""
-        assert is_json_serializable_type(Dict[str, int]) is True
+        assert is_json_serializable_type(dict[str, int]) is True
 
     def test_returns_true_for_optional_type(self):
         """Test is_json_serializable_type returns True for Optional[str]."""
@@ -109,7 +109,7 @@ class TestIsJsonSerializableType:
 
     def test_returns_false_for_non_serializable_callable(self):
         """Test is_json_serializable_type returns False for callable."""
-        from typing import Callable
+        from collections.abc import Callable
 
         assert is_json_serializable_type(Callable) is False
 

@@ -3,7 +3,6 @@
 Tests for AIFunction class initialization, async detection, and metadata preservation.
 """
 
-from typing import List
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -928,7 +927,7 @@ class TestAIFunctionResultExtraction:
     def test_extracts_list_from_invocation_state(self):
         """Test AIFunction extracts list from invocation_state."""
 
-        def func() -> List[str]:
+        def func() -> list[str]:
             """Return a list of strings."""
             return ["a", "b", "c"]
 
@@ -1100,7 +1099,7 @@ class TestAIFunctionResultExtractionNonPydanticProperty:
     def test_non_pydantic_list_extraction_from_invocation_state(self, list_values: list):
         """For any list result in invocation_state, AIFunction should return it directly."""
 
-        def func() -> List[str]:
+        def func() -> list[str]:
             """Return a list of strings."""
             return []
 

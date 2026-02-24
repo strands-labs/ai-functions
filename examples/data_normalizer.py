@@ -36,6 +36,7 @@ class NormalizedResponses(BaseModel):
 # auto-matched by name to the ai_function's parameters and injected at validation time.
 # This lets the validator check the LLM's output against the original inputs.
 
+
 def validate_mapping(
     result: NormalizedResponses,
     responses: list[str],
@@ -57,6 +58,7 @@ def validate_mapping(
 # LLM fills the NormalizedResponses schema directly, no code execution.
 # The docstring is the prompt template — {responses} and {categories} are substituted
 # with the actual argument values. The function body is empty (returns None) by design.
+
 
 @ai_function(
     model=model,
