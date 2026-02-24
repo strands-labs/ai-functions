@@ -16,6 +16,7 @@ from ai_functions.types import AIFunctionConfig
 # ── Helpers ──────────────────────────────────────────────────────────────────
 # Parses CREATE TABLE DDL into a lookup table used by the post-condition validators.
 
+
 def _build_schema_catalog(schema_ddl: str) -> dict[str, set[str]]:
     """Parse CREATE TABLE DDL to build a table -> columns mapping.
 
@@ -57,6 +58,7 @@ def validate_syntax(result: str, dialect: str) -> None:
 
 # ── Post-condition 2: Table references ──────────────────────────────────────
 
+
 def validate_table_references(result: str, schema: str, dialect: str) -> None:
     """Validate that all table references exist in the schema (AST-based).
 
@@ -90,6 +92,7 @@ def validate_table_references(result: str, schema: str, dialect: str) -> None:
 
 
 # ── Post-condition 3: Column references ─────────────────────────────────────
+
 
 def validate_column_references(result: str, schema: str, dialect: str) -> None:
     """Validate column references against the schema, resolving table aliases.
@@ -129,10 +132,7 @@ def validate_column_references(result: str, schema: str, dialect: str) -> None:
             real_table = alias_map.get(table_ref, table_ref)
             if real_table in catalog and col_name not in catalog[real_table]:
                 valid_cols = sorted(catalog[real_table])
-                invalid.append(
-                    f"Column '{col_name}' not in table '{real_table}'. "
-                    f"Valid columns: {valid_cols}"
-                )
+                invalid.append(f"Column '{col_name}' not in table '{real_table}'. Valid columns: {valid_cols}")
         else:
             # Unqualified: skip if it's a SELECT alias (e.g., ORDER BY total_sold)
             if col_name in select_aliases:
@@ -149,6 +149,7 @@ def validate_column_references(result: str, schema: str, dialect: str) -> None:
 # LOCAL mode (default): LLM gets a python_executor tool with sqlglot available,
 # so it can build/validate queries programmatically before returning the result.
 # code_executor_kwargs sets a 5s timeout to prevent runaway code.
+
 
 @ai_function(
     config=AIFunctionConfig(

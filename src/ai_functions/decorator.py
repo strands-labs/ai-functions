@@ -9,7 +9,8 @@ The decorator supports:
 """
 
 import dataclasses
-from typing import Callable, TypeVar, Unpack, overload
+from collections.abc import Callable
+from typing import TypeVar, Unpack, overload
 
 from .core import AIFunction
 from .types.ai_function import AIFunctionConfig, AIFunctionMergedKwargs, split_config_and_agent_kwargs
@@ -34,7 +35,7 @@ def ai_function(
 
 # Overload: bare decorator usage - @ai_function
 @overload
-def ai_function(func: F) -> AIFunction: ...
+def ai_function[F: Callable](func: F) -> AIFunction: ...
 
 
 def ai_function(

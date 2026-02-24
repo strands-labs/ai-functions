@@ -7,7 +7,8 @@ outputs of AI functions. Supports sync, async, and AI-powered validators.
 import asyncio
 import inspect
 import logging
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from ..types.ai_function import PostConditionResult
 

@@ -4,9 +4,10 @@ This module defines the core types used throughout the interface.
 """
 
 import dataclasses
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any, Callable, Mapping, TypedDict, Union
+from typing import Any, TypedDict, Unpack
 
 from pydantic import BaseModel, Field
 from strands.agent import ConversationManager
@@ -19,7 +20,6 @@ from strands.tools.executors._executor import ToolExecutor
 from strands.types.content import Messages
 from strands.types.tools import JSONSchema
 from strands.types.traces import AttributeValue
-from typing_extensions import Unpack
 
 
 class CodeExecutionMode(StrEnum):
@@ -85,7 +85,7 @@ class AIFunctionKwargs(TypedDict, total=False):
 
     model: Model | str | None
     system_prompt: str | None
-    tools: list[Union[str, dict[str, str], ToolProvider, Any]] | None
+    tools: list[str | dict[str, str] | ToolProvider | Any] | None
     post_conditions: list[PostCondition]
     max_attempts: int
     code_execution_mode: CodeExecutionMode | str
@@ -124,7 +124,7 @@ class AIFunctionConfig:
 
     model: Model | str | None = None
     system_prompt: str | None = None
-    tools: list[Union[str, dict[str, str], ToolProvider, Any]] | None = None
+    tools: list[str | dict[str, str] | ToolProvider | Any] | None = None
     post_conditions: list[PostCondition] = field(default_factory=list)
     max_attempts: int = 10
     code_execution_mode: CodeExecutionMode | str = CodeExecutionMode.DISABLED

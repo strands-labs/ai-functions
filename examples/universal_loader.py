@@ -6,25 +6,28 @@ dynamically writes and execute the code to convert it to DataFrame.
 The structure of the DataFrame is validated using a post-condition to ensure it will be compatible with
 the remaining parts of the workflow.
 """
+
 from pandas import DataFrame, api
 
 from ai_functions import ai_function
-from ai_functions.types import PostConditionResult, CodeExecutionMode
+
 
 def check_invoice_dataframe(df: DataFrame):
     """Post-condition: validate DataFrame structure."""
-    assert {'product_name', 'quantity', 'price', 'purchase_date'}.issubset(df.columns)
-    assert api.types.is_integer_dtype(df['quantity']), "quantity must be an integer"
-    assert api.types.is_float_dtype(df['price']), "price must be a float"
-    assert api.types.is_datetime64_any_dtype(df['purchase_date']), "purchase_date must be a datetime64"
-    assert not df.duplicated(subset=['product_name', 'price', 'purchase_date']).any(), "The combination of product_name, price, and purchase_date must be unique"
+    assert {"product_name", "quantity", "price", "purchase_date"}.issubset(df.columns)
+    assert api.types.is_integer_dtype(df["quantity"]), "quantity must be an integer"
+    assert api.types.is_float_dtype(df["price"]), "price must be a float"
+    assert api.types.is_datetime64_any_dtype(df["purchase_date"]), "purchase_date must be a datetime64"
+    assert not df.duplicated(subset=["product_name", "price", "purchase_date"]).any(), (
+        "The combination of product_name, price, and purchase_date must be unique"
+    )
 
 
 @ai_function(
     post_conditions=[check_invoice_dataframe],
     code_execution_mode="local",
     code_executor_additional_imports=["pandas", "sqlite3"],
-    code_executor_kwargs={"timeout_seconds": 10}
+    code_executor_kwargs={"timeout_seconds": 10},
 )
 def import_invoice(path: str) -> DataFrame:
     """
@@ -36,7 +39,7 @@ def import_invoice(path: str) -> DataFrame:
     """
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     import os
     import sys
     import tempfile
@@ -52,6 +55,6 @@ if __name__ == '__main__':
             print(f"===== Reading data from {filename.name} =====")
             df = import_invoice(filename)
             results.append(df)
-        for filename, df in zip(filenames, results):
+        for filename, df in zip(filenames, results, strict=False):
             print(f"\n===== Parsed data from {filename.name} =====")
             print(df)

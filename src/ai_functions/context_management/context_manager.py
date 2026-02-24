@@ -4,7 +4,7 @@ import hashlib
 import json
 import logging
 import uuid
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from strands.agent import Agent
@@ -20,7 +20,7 @@ _STATE_KEY_CYCLE_HISTORY = "_cycle_history"
 _STATE_KEY_LAST_CHECKPOINT = "_last_checkpoint_cycle"
 
 
-class NoCacheModel(str, Enum):
+class NoCacheModel(StrEnum):
     """Models that don't support prompt caching."""
 
     NOVA = "nova"

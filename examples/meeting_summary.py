@@ -15,6 +15,7 @@ class MeetingSummary(BaseModel):
     summary: str
     action_items: list[str]
 
+
 # Define the post-conditions that the summary should satisfy
 # Post-conditions take as input the result of the AI function to validate
 # and, optionally, any of its original arguments (e.g., `max_length`)
@@ -37,6 +38,7 @@ def check_style(response: MeetingSummary) -> PostConditionResult:
     </summary>
     """
 
+
 # Main AI Function definition, with post-condition and the number of times the agent will try to generate
 # a result passing all required conditions before an exception is raised.
 @ai_function(model=summary_model, post_conditions=[check_length, check_style], max_attempts=5)
@@ -49,11 +51,11 @@ def summarize_meeting(transcripts: str, max_length: int = 50) -> MeetingSummary:
     """
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     transcripts = textwrap.dedent("""\
     Sarah: Alright, let's get started. We're three weeks out from the beta launch.
            Marcus, where are we on the authentication module?
-    Marcus: We're about 80% done. The OAuth integration is working but I'm still 
+    Marcus: We're about 80% done. The OAuth integration is working but I'm still
             debugging an issue with session timeouts. I should have it wrapped up by Friday,
             and then I'll push it to staging for QA. Oh, and Lisa—once it's there, you'll be
             able to do your screen recordings.

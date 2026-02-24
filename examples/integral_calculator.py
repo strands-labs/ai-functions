@@ -3,8 +3,10 @@ Example of using an AI Functions with Python integration to compute an integral 
 return its symbolic value as a native Python object.
 """
 
-from ai_functions import ai_function
 import sympy
+
+from ai_functions import ai_function
+
 
 @ai_function(code_execution_mode="local", code_executor_additional_imports=["sympy"])
 def compute_integral(integral: str) -> sympy.Expr:
@@ -15,7 +17,7 @@ def compute_integral(integral: str) -> sympy.Expr:
     """
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     answer = compute_integral(r"\int_{-\inf}^\inf e^{-x^2} dx")
 
     print("The symbolic value of the integral is:", answer)
