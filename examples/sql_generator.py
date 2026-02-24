@@ -11,7 +11,6 @@ import sqlglot
 from sqlglot import exp
 
 from ai_functions import ai_function
-from ai_functions.types import AIFunctionConfig
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 # Parses CREATE TABLE DDL into a lookup table used by the post-condition validators.
@@ -151,12 +150,10 @@ def validate_column_references(result: str, schema: str, dialect: str) -> None:
 # code_executor_kwargs sets a 5s timeout to prevent runaway code.
 
 @ai_function(
-    config=AIFunctionConfig(
-        code_executor_additional_imports=["sqlglot"],
-        code_executor_kwargs={"timeout_seconds": 5},
-        post_conditions=[validate_syntax, validate_table_references, validate_column_references],
-        max_attempts=3,
-    )
+    code_executor_additional_imports=["sqlglot"],
+    code_executor_kwargs={"timeout_seconds": 5},
+    post_conditions=[validate_syntax, validate_table_references, validate_column_references],
+    max_attempts=3,
 )
 def generate_sql(question: str, schema: str, dialect: str = "postgres") -> str:
     """
