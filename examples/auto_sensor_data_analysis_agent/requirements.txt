@@ -1,0 +1,39 @@
+# Automobile Sensor Data Analysis - Dependencies
+
+# Core AI Functions
+strands-ai-functions @ git+https://github.com/strands-labs/ai-functions.git
+strands-agents-tools>=0.2.20
+
+# Data Processing
+pandas>=2.0.0
+numpy>=1.24.0
+
+# Machine Learning
+scikit-learn>=1.3.0
+scipy>=1.15.0
+joblib>=1.4.0
+threadpoolctl>=3.1.0
+
+# Visualization
+matplotlib>=3.7.0
+seaborn>=0.12.0
+plotly>=5.14.0
+kaleido>=0.2.1
+
+# Matplotlib Dependencies
+contourpy>=1.0.1
+cycler>=0.10
+fonttools>=4.22.0
+kiwisolver>=1.3.1
+pillow>=8.0.0
+pyparsing>=2.3.1
+
+# Kaleido Dependencies
+choreographer>=1.1.1
+logistro>=1.0.8
+orjson>=3.10.15
+pytest-timeout>=2.4.0
+simplejson>=3.19.3
+
+# Additional Utilities
+pydantic>=2.0.0
