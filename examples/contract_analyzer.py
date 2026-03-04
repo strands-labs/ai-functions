@@ -1,9 +1,9 @@
 """Contract Analyzer — Legal Contract Clause Extraction.
 
 Extracts specific clause types from a contract and flags risks using an AI
-function. Uses nested Pydantic models for structured output and chains 3 post-conditions 
-that validate clause coverage, verify excerpts exist verbatim in the source 
-text (anti-hallucination), and check risk flag referential integrity. 
+function. Uses nested Pydantic models for structured output and chains 3 post-conditions
+that validate clause coverage, verify excerpts exist verbatim in the source
+text (anti-hallucination), and check risk flag referential integrity.
 Post-condition parameter injection lets validators
 access the original contract text and requested clause types.
 """
@@ -55,6 +55,7 @@ VALID_SEVERITIES = {"low", "medium", "high"}
 # If any fail, the error message is fed back to the LLM for retry (up to max_attempts).
 # `clause_types` is injected from analyze_contract's parameter of the same name.
 
+
 def validate_clause_coverage(result: ContractAnalysis, clause_types: list[str]) -> None:
     """Validate that every requested clause type has at least one extracted clause."""
     extracted_types = {c.clause_type.lower() for c in result.clauses}
@@ -62,10 +63,7 @@ def validate_clause_coverage(result: ContractAnalysis, clause_types: list[str]) 
 
     missing = requested_types - extracted_types
     if missing:
-        raise ValueError(
-            f"Missing clause types: {sorted(missing)}. "
-            f"Extracted: {sorted(extracted_types)}"
-        )
+        raise ValueError(f"Missing clause types: {sorted(missing)}. Extracted: {sorted(extracted_types)}")
 
 
 # ── Post-condition 2: Excerpt verification (anti-hallucination) ─────────────
@@ -88,10 +86,7 @@ def validate_excerpts(result: ContractAnalysis, contract_text: str) -> None:
         elif normalized_excerpt not in normalized_source:
             # Show first 80 chars of the excerpt in the error
             preview = clause.excerpt[:80] + ("..." if len(clause.excerpt) > 80 else "")
-            hallucinated.append(
-                f"Clause {i} ({clause.clause_type}): excerpt not found in source: "
-                f"'{preview}'"
-            )
+            hallucinated.append(f"Clause {i} ({clause.clause_type}): excerpt not found in source: '{preview}'")
 
     if hallucinated:
         raise ValueError("Hallucinated excerpts detected:\n" + "\n".join(hallucinated))
@@ -106,24 +101,19 @@ def validate_risk_flags(result: ContractAnalysis) -> None:
 
     # Check overall_risk is valid
     if result.overall_risk.lower() not in VALID_SEVERITIES:
-        errors.append(
-            f"Invalid overall_risk: '{result.overall_risk}'. "
-            f"Must be one of: {sorted(VALID_SEVERITIES)}"
-        )
+        errors.append(f"Invalid overall_risk: '{result.overall_risk}'. Must be one of: {sorted(VALID_SEVERITIES)}")
 
     for i, flag in enumerate(result.risk_flags):
         # Check clause_index is valid
         if flag.clause_index < 0 or flag.clause_index >= len(result.clauses):
             errors.append(
-                f"Risk flag {i}: clause_index {flag.clause_index} out of range "
-                f"[0, {len(result.clauses) - 1}]"
+                f"Risk flag {i}: clause_index {flag.clause_index} out of range [0, {len(result.clauses) - 1}]"
             )
 
         # Check severity is valid
         if flag.severity.lower() not in VALID_SEVERITIES:
             errors.append(
-                f"Risk flag {i}: invalid severity '{flag.severity}'. "
-                f"Must be one of: {sorted(VALID_SEVERITIES)}"
+                f"Risk flag {i}: invalid severity '{flag.severity}'. Must be one of: {sorted(VALID_SEVERITIES)}"
             )
 
     if errors:
@@ -134,6 +124,7 @@ def validate_risk_flags(result: ContractAnalysis) -> None:
 # LLM fills the ContractAnalysis schema directly, no code execution.
 # The docstring is the prompt template — {contract_text} and {clause_types} are
 # substituted with actual argument values. The function body is empty by design.
+
 
 @ai_function(
     post_conditions=[validate_clause_coverage, validate_excerpts, validate_risk_flags],

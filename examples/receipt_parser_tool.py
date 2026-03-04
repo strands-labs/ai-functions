@@ -48,6 +48,7 @@ class ReceiptData(BaseModel):
 # its structured output. They validate the result and, if any fail, the error
 # message is fed back to the LLM which retries (up to max_attempts times).
 
+
 def validate_math(result: ReceiptData) -> None:
     """Validate that all math is internally consistent."""
     errors: list[str] = []
@@ -64,16 +65,12 @@ def validate_math(result: ReceiptData) -> None:
     # Check subtotal ≈ sum of line item amounts
     items_sum = sum(item.amount for item in result.items)
     if abs(result.subtotal - items_sum) > 0.01:
-        errors.append(
-            f"Subtotal {result.subtotal} != sum of line items {items_sum}"
-        )
+        errors.append(f"Subtotal {result.subtotal} != sum of line items {items_sum}")
 
     # Check total ≈ subtotal + tax
     expected_total = result.subtotal + result.tax
     if abs(result.total - expected_total) > 0.01:
-        errors.append(
-            f"Total {result.total} != subtotal {result.subtotal} + tax {result.tax} = {expected_total}"
-        )
+        errors.append(f"Total {result.total} != subtotal {result.subtotal} + tax {result.tax} = {expected_total}")
 
     if errors:
         raise ValueError("\n".join(errors))
@@ -99,6 +96,7 @@ def validate_completeness(result: ReceiptData) -> None:
 # ── AI Function (used directly as a tool) ──────────────────────────────────
 # The `description` argument is used as the tool description that the
 # orchestrating agent sees when deciding which tool to call.
+
 
 @ai_function(
     description="Parse a receipt or invoice text and extract structured expense data",
@@ -186,7 +184,6 @@ SAMPLE_RECEIPTS = {
 
         Payment Terms: Net 30
         """),
-
     "receipt_2": textwrap.dedent("""\
         Example Corp
         inv no: EXC-0392
@@ -200,7 +197,6 @@ SAMPLE_RECEIPTS = {
         sales tax   $119.38
         TOTAL DUE  $1,611.68
         """),
-
     "receipt_3": textwrap.dedent("""\
         *** AnyOrganization Cybersecurity ***
         Receipt #AOC-7721

@@ -6,13 +6,14 @@ handling event loop management and context variable preservation.
 
 import asyncio
 import contextvars
+from collections.abc import Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
-from typing import Awaitable, Callable, TypeVar
+from typing import TypeVar
 
 T = TypeVar("T")
 
 
-def run_async(async_func: Callable[[], Awaitable[T]]) -> T:
+def run_async[T](async_func: Callable[[], Awaitable[T]]) -> T:
     """Run an async function in a separate thread to avoid event loop conflicts.
 
     This utility handles the common pattern of running async code from sync contexts
