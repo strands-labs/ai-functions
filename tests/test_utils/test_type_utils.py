@@ -3,7 +3,6 @@
 Tests for is_pydantic_model and is_json_serializable_type functions.
 """
 
-from typing import Optional
 
 from hypothesis import given, settings
 from hypothesis import strategies as st
@@ -105,7 +104,7 @@ class TestIsJsonSerializableType:
 
     def test_returns_true_for_optional_type(self):
         """Test is_json_serializable_type returns True for Optional[str]."""
-        assert is_json_serializable_type(Optional[str]) is True
+        assert is_json_serializable_type(str | None) is True
 
     def test_returns_false_for_non_serializable_callable(self):
         """Test is_json_serializable_type returns False for callable."""

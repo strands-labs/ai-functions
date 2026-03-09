@@ -39,7 +39,8 @@ def check_nan(df: pd.DataFrame):
     assert not df.isnull().any().any(), "Returned DataFrame contains NaN values"
 
 
-# By default, agents have access to a python execution environment, allowing it to use libraries and return rich data-types
+# By default, agents have access to a python execution environment,
+# allowing it to use libraries and return rich data-types
 @ai_function(config=Configs.DATA_ANALYSIS, post_conditions=[check_nan])
 async def research_price(stock: str) -> pd.DataFrame:
     """

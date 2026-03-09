@@ -89,7 +89,8 @@ def report_planner(topic: str) -> ReportPlan:
     {topic}
     </topic>
 
-    If needed, perform an initial cursory websearch to understand the topic and figure out what topics should be covered.
+    If needed, perform an initial cursory websearch to understand the topic and figure out what topics
+    should be covered.
     Then,
     """
 
@@ -115,7 +116,7 @@ class Report:
 
     @ai_function(description="Give constructive criticism on the current state of the report.")
     def critique_report(self) -> str:
-        return t"""
+        return f"""
         Provide a constructive critique of the following report.
         {self.to_markdown()}
         """
