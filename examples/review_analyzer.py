@@ -57,6 +57,9 @@ def summarize_review(review: str) -> str:
 
 # ── Pipeline ────────────────────────────────────────────────────────────────
 # ai_functions are regular callables — compose them with plain Python.
+# These two calls are independent, so they could also be run in parallel
+# by defining the ai_functions as async and using asyncio.gather():
+#   sentiment, summary = await asyncio.gather(classify_sentiment(review), summarize_review(review))
 
 
 def analyze_review(review: str) -> dict:
