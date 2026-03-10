@@ -8,15 +8,12 @@ from ai_functions import ai_function
 from ai_functions.context_management.context_manager import ContextManager
 from ai_functions.context_management.summarizing_window_manager import SummarizingWindowConversationManager
 
-model = 'global.anthropic.claude-sonnet-4-5-20250929-v1:0'
-fast_model = 'global.anthropic.claude-haiku-4-5-20251001-v1:0'
+model = "global.anthropic.claude-sonnet-4-5-20250929-v1:0"
+fast_model = "global.anthropic.claude-haiku-4-5-20251001-v1:0"
 
 
 # Configure logging to see when managers are triggered
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(levelname)s - %(name)s - %(message)s'
-)
+logging.basicConfig(level=logging.INFO, format="%(levelname)s - %(name)s - %(message)s")
 
 
 class Chapter(BaseModel):
@@ -32,10 +29,9 @@ class ArticleState:
 
     @tool
     def write_chapter(self, title: str, content: str, key_concepts: list[str]) -> str:
-        chapter = Chapter(chapter_number=len(self.chapters) + 1,
-                          title=title,
-                          content=content,
-                          key_concepts=key_concepts)
+        chapter = Chapter(
+            chapter_number=len(self.chapters) + 1, title=title, content=content, key_concepts=key_concepts
+        )
         self.chapters.append(chapter)
         return "Chapter added successfully."
 
@@ -60,29 +56,33 @@ class ArticleState:
 
 article_state = ArticleState()
 
+
 @ai_function(model=model, tools=[article_state.read_book])
 def summarizer() -> str:
     """
     Summarize in one paragraph the content of the article so far, and explain what still needs to be written.
     """
 
+
 @ai_function(
     model=model,
     tools=[article_state.write_chapter],
-    hooks=[ContextManager(
-        manage_conversation_every_cycle=True,  # Check and manage cache after each tool call
-        max_non_cache_tokens=1024,  # Reset cache when uncached tokens exceed this (low to demo)
-    )],
+    hooks=[
+        ContextManager(
+            manage_conversation_every_cycle=True,  # Check and manage cache after each tool call
+            max_non_cache_tokens=1024,  # Reset cache when uncached tokens exceed this (low to demo)
+        )
+    ],
     conversation_manager=SummarizingWindowConversationManager(
-        summarization_function=summarizer, # AI Function that will provide the summary
+        summarization_function=summarizer,  # AI Function that will provide the summary
         max_tokens=1024,  # Trigger summarization when total tokens exceed this (low to demo)
         preserve_recent_messages=2,
     ),  # Use TaskConversationManager for summarization
-    post_conditions=[lambda _: article_state.check_length(target_length=5)]
+    post_conditions=[lambda _: article_state.check_length(target_length=5)],
 )
 def write_article(
-        article_title: str,
-        field: str,
+    article_title: str,
+    field: str,
 ) -> Literal["done"]:
     """
     Write research article titled "{article_title}" about {field}.
@@ -91,15 +91,12 @@ def write_article(
     """
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     print("Generating an article\n(This will take a few minutes)...")
 
     # Write an entire article over multiple tool calls
     # This will create a long conversation that triggers summarization
-    write_article(
-        article_title="Advances in Quantum Computing Error Correction",
-        field="quantum computing"
-    )
+    write_article(article_title="Advances in Quantum Computing Error Correction", field="quantum computing")
     print("\n\n... generation successful")
     print("=" * 70)
     print(article_state.to_markdown())

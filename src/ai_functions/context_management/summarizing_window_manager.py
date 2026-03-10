@@ -1,7 +1,7 @@
 """Summarizing conversation history management with configurable options."""
 
 import logging
-from typing import TYPE_CHECKING, Any, List, Optional
+from typing import TYPE_CHECKING, Any
 
 from strands.agent import Agent
 from strands.agent.conversation_manager import ConversationManager
@@ -89,7 +89,7 @@ class SummarizingWindowConversationManager(ConversationManager):
                 texts.append(content_block["text"])
         return " ".join(texts)
 
-    def max_word_overflow_index(self, messages: List[Message]) -> int:
+    def max_word_overflow_index(self, messages: list[Message]) -> int:
         """Return the index of the message with the largest overflow, or -1."""
         overflows = [
             (i, len(self._extract_text_from_message(msg).split()) - self._max_words_per_message)
@@ -207,7 +207,7 @@ class SummarizingWindowConversationManager(ConversationManager):
             len(remaining_messages),
         )
 
-    def reduce_context(self, agent: Agent, e: Optional[Exception] = None, **kwargs: Any) -> None:
+    def reduce_context(self, agent: Agent, e: Exception | None = None, **kwargs: Any) -> None:
         """Reduce context using summarization.
 
         Args:
@@ -230,7 +230,7 @@ class SummarizingWindowConversationManager(ConversationManager):
 
         self.summarize_conversation(agent, current_tokens=current_tokens, prompt=prompt)
 
-    def _adjust_split_point_for_tool_pairs(self, messages: List[Message], split_point: int) -> int:
+    def _adjust_split_point_for_tool_pairs(self, messages: list[Message], split_point: int) -> int:
         """Adjust the split point to avoid breaking ToolUse/ToolResult pairs.
 
         Uses the same logic as SlidingWindowConversationManager for consistency.
