@@ -15,7 +15,7 @@ AI Functions also support persistent memory and workflow optimization. Just as P
 
 ### Prerequisites
 
-- Python 3.12 or higher (Python 3.14+ recommended for all features)
+- Python 3.10 or higher (Python 3.14+ recommended for native [t-string](https://peps.python.org/pep-0750/) template literal support)
 - Valid credentials for a supported model provider (AWS Bedrock, OpenAI, etc.)
 - (Recommended) [uv](https://docs.astral.sh/uv/getting-started/installation/) to run the provided examples
 

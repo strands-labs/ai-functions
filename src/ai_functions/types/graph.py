@@ -2,7 +2,7 @@
 
 import typing
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Generic, Literal, TypeVar
 
 from strands import Agent
 
@@ -10,10 +10,12 @@ if typing.TYPE_CHECKING:
     from ..core import AIFunction
     from ..memory import MemoryBackend
 
+T = TypeVar("T")
+
 
 # Base class for both Result and Parameter
 @dataclass(kw_only=True)
-class Node[T]:
+class Node(Generic[T]):
     """Base graph node holding a value and optional gradients."""
 
     value: T
@@ -27,7 +29,7 @@ class Node[T]:
 
 # Node that represents the result of an AIFunction call, tracks additional information
 @dataclass(kw_only=True)
-class Result[T](Node[T]):
+class Result(Node[T]):
     """Node representing the output of an AIFunction invocation."""
 
     func: "AIFunction"
@@ -79,7 +81,7 @@ class ParameterRef:
 
 
 @dataclass(kw_only=True)
-class ParameterView[T](Node[T]):
+class ParameterView(Node[T]):
     """A view of a parameter produced by recall/query/search on the backend."""
 
     source: ParameterRef

@@ -11,7 +11,7 @@ The decorator supports:
 import dataclasses
 import inspect
 from collections.abc import Awaitable, Callable
-from typing import Unpack, cast, overload
+from typing import ParamSpec, TypeVar, Unpack, cast, overload
 
 from .core import AsyncAIFunction, SyncAIFunction
 from .types.ai_function import AIFunctionConfig, AIFunctionMergedKwargs, split_config_and_agent_kwargs
@@ -20,8 +20,11 @@ from .validation.post_conditions import (
     validate_post_condition_signature,
 )
 
+P = ParamSpec("P")
+R = TypeVar("R")
 
-def _build[**P, R](
+
+def _build(
     fn: Callable[P, R | Awaitable[R]],
     config: AIFunctionConfig | None,
     **kwargs: Unpack[AIFunctionMergedKwargs],
@@ -49,24 +52,24 @@ class _Decorator:
         self.kwargs = kwargs
 
     @overload
-    def __call__[**P, R](self, fn: Callable[P, Awaitable[R]], /) -> AsyncAIFunction[P, R]: ...  # type: ignore[overload-overlap]
+    def __call__(self, fn: Callable[P, Awaitable[R]], /) -> AsyncAIFunction[P, R]: ...  # type: ignore[overload-overlap]
     @overload
-    def __call__[**P, R](self, fn: Callable[P, R], /) -> SyncAIFunction[P, R]: ...
+    def __call__(self, fn: Callable[P, R], /) -> SyncAIFunction[P, R]: ...
 
-    def __call__[**P, R](self, fn: Callable[P, R | Awaitable[R]]) -> SyncAIFunction[P, R] | AsyncAIFunction[P, R]:
+    def __call__(self, fn: Callable[P, R | Awaitable[R]]) -> SyncAIFunction[P, R] | AsyncAIFunction[P, R]:
         return _build(fn, self.config, **self.kwargs)
 
 
 # Bare decorator: @ai_function
 @overload
-def ai_function[**P, R](func: Callable[P, Awaitable[R]], /) -> AsyncAIFunction[P, R]: ...  # type: ignore[overload-overlap]
+def ai_function(func: Callable[P, Awaitable[R]], /) -> AsyncAIFunction[P, R]: ...  # type: ignore[overload-overlap]
 @overload
-def ai_function[**P, R](func: Callable[P, R], /) -> SyncAIFunction[P, R]: ...
+def ai_function(func: Callable[P, R], /) -> SyncAIFunction[P, R]: ...
 
 
 # Parameterized decorator: @ai_function(...), @ai_function(config=...), etc.
 @overload
-def ai_function[**P, R](
+def ai_function(
     func: None = None,
     *,
     config: AIFunctionConfig | None = None,

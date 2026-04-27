@@ -15,7 +15,7 @@ import inspect
 import logging
 import types
 from collections.abc import Awaitable, Callable, Sequence
-from typing import Any, Self, Unpack, get_type_hints
+from typing import Any, Generic, ParamSpec, Self, TypeVar, Unpack, get_type_hints
 
 import pydantic
 from pydantic import BaseModel, ConfigDict, Field, create_model
@@ -55,6 +55,9 @@ from .validation.post_conditions import (
 
 logger = logging.getLogger(__name__)
 
+P = ParamSpec("P")
+R = TypeVar("R")
+
 # Template for validation error feedback message
 _VALIDATION_ERROR_TEMPLATE = """[VALIDATION ERROR]
 Your previous response failed validation with the following errors:
@@ -63,7 +66,7 @@ Your previous response failed validation with the following errors:
 Please try again and ensure your output satisfies all requirements."""
 
 
-class AIFunction[**P, R](ToolProvider):
+class AIFunction(Generic[P, R], ToolProvider):
     """Wrapper class that executes an AI-enhanced function.
 
     This class handles the full lifecycle of an AI function call:
@@ -761,7 +764,7 @@ class AIFunction[**P, R](ToolProvider):
 
 
 # Wrapper for Sync function so that __call__ is sync by default (needed for proper typing)
-class SyncAIFunction[**P, R](AIFunction[P, R]):
+class SyncAIFunction(AIFunction[P, R]):
     """AIFunction variant whose ``__call__`` is synchronous."""
 
     func: Callable[P, R]
@@ -772,7 +775,7 @@ class SyncAIFunction[**P, R](AIFunction[P, R]):
 
 
 # Wrapper for Async function so that __call__ is async by default (needed for proper typing)
-class AsyncAIFunction[**P, R](AIFunction[P, R]):
+class AsyncAIFunction(AIFunction[P, R]):
     """AIFunction variant whose ``__call__`` is asynchronous."""
 
     func: Callable[P, Awaitable[R]]

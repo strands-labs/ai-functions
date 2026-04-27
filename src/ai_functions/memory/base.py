@@ -2,7 +2,7 @@
 
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Sequence
-from typing import Any, Self
+from typing import Any, Self, TypeVar
 
 from pydantic import BaseModel
 from pydantic.fields import FieldInfo
@@ -18,6 +18,8 @@ from .procedural import ProceduralMarker
 from .utils import flatten_schema
 
 ValueType = str | list[str]
+
+T = TypeVar("T", bound=ValueType)
 
 
 class MemoryBackend(ABC):
@@ -117,7 +119,7 @@ class MemoryBackend(ABC):
             )
         return self._refs[name]
 
-    def _create_and_register_view[T: ValueType](
+    def _create_and_register_view(
         self,
         name: str,
         value: T,
