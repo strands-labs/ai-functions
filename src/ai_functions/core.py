@@ -641,7 +641,7 @@ class AIFunction(Generic[P, R], ToolProvider):
             tools=tools,
             structured_output_model=self._structured_output_type if self._is_structured_output_enabled else None,
             messages=messages if messages is not None else messages_from_kwargs,
-            **agent_kwargs,  # type: ignore[misc]
+            **agent_kwargs,  # type: ignore[misc, arg-type]
         )
 
     def _create_system_prompt(self) -> str:
