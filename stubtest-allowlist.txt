@@ -1,0 +1,36 @@
+# PEP 695 generics create __type_params__ at runtime; not representable in stubs
+ai_functions.ai_thread.ai_function.AIFunction.__type_params__
+ai_functions.ai_thread.ai_thread.AIThread.__type_params__
+ai_functions.ai_thread.ai_thread.OutputSpec.__type_params__
+ai_functions.handle.ThreadHandle.__type_params__
+ai_functions.runtime.worker.PromptRequest.__type_params__
+ai_functions.protocols.Spawnable.__type_params__
+ai_functions.protocols.Thread.__type_params__
+
+# Annotated[Union[...], Field(...)] aliases are callable _AnnotatedAlias at runtime, not Union types
+ai_functions.network.wire.Binary
+ai_functions.network.wire.Frame
+ai_functions.types.events.SystemEvent
+ai_functions.types.policy.Policy
+
+# NewType creates functions at runtime; stubs declare them as classes (TypeInfo)
+ai_functions.types.ids.EventId
+ai_functions.types.ids.MessageId
+ai_functions.types.ids.ThreadId
+ai_functions.types.ids.WorkerId
+
+# pydantic mangles __context in model_post_init; not our concern
+ai_functions.ai_thread.postcondition.PostConditionResult.model_post_init
+
+# CoordinatorHandlers / WorkerHandlers are dispatch tables for the wire
+# layer. Each public method is a @rpc_method-decorated handler; the stub
+# declares only the class signatures (the methods are internal machinery
+# discovered by bind_handlers via introspection, not a user-facing API).
+ai_functions.network.client.WorkerHandlers.*
+ai_functions.network.endpoint.CoordinatorHandlers.*
+
+# wire_methods.py is a collection of per-RPC pydantic request models.
+# Their shapes are implementation details of the wire protocol; the spec
+# documents the RPC surface in channel.pyi / client.pyi / endpoint.pyi
+# rather than duplicating every params model in a stub file.
+ai_functions.network.wire_methods

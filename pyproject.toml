@@ -50,6 +50,7 @@ dependencies = [
     "pytest-cov>=4.0",
     "hypothesis>=6.0",
     "ruff>=0.1.0",
+    "mypy>=1.20.0",
     "websockets>=12.0",
     "cloudpickle>=3.0.0",
 ]
@@ -59,6 +60,7 @@ test = "pytest {args:tests}"
 test-cov = "pytest --cov=ai_functions {args:tests}"
 lint = "ruff check src tests"
 format = "ruff format src tests"
+check-spec = "MYPYPATH=spec stubtest ai_functions --mypy-config-file pyproject.toml --allowlist stubtest-allowlist.txt"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -89,6 +91,14 @@ docstring-code-format = true
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
+
+[tool.mypy]
+python_version = "3.13"
+ignore_errors = true
+
+[tool.pydantic-mypy]
+init_forbid_extra = true
+init_typed = true
 
 [tool.uv.workspace]
 members = ["examples"]

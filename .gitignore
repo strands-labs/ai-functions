@@ -7,6 +7,7 @@ dist/
 uv.lock
 .mypy_cache/
 .ruff_cache/
+.venv/
 
 
 # MkDocs
