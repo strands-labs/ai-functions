@@ -1003,6 +1003,117 @@ This is useful for building a family of variants (fast vs. thorough, local vs. r
 
 When a thread's accumulated event log exceeds the model's context window, the library compacts the history by emitting a `ContextSummarizedEvent` whose payload is a shorter synthetic sequence of events; subsequent cycles render that payload in place of the events it replaces. The policy for how the compaction is performed is pluggable via `SummarizationStrategy`. `DefaultSummarizationStrategy` covers the common case; custom strategies can be supplied through `ThreadConfig.summarization_strategy` to change which events are preserved verbatim and which are folded into the synthetic summary.
 
+## Running agents across processes
+
+The `ai-functions` command-line tool and `ai_functions.serve` together let a
+user assemble a toolkit — or a team — of agents, each defined in its own
+script. A single machine-wide coordinator runs in the background; every agent
+script, started independently, connects to that coordinator on startup,
+registers itself, and becomes discoverable by every other agent. Peers find
+each other through the coordinator and talk via the same cross-thread messaging
+mechanism described earlier.
+
+Start the coordinator once:
+
+```bash
+$ ai-functions server
+ai-functions coordinator listening at ws://127.0.0.1:52115/rpc
+runtime file: …/ai_functions/coordinator.json
+```
+
+Write each agent as a standalone script. `ai_functions.serve` registers the
+spawnable with the running coordinator and keeps the process alive until
+interrupted:
+
+```python
+# alice.py
+import ai_functions
+from ai_functions import ai_function
+
+
+@ai_function(str, structured_output=False)
+def alice(message: str):
+    """You are Alice. Bob knows geography; ask him when appropriate. {message}"""
+
+
+if __name__ == "__main__":
+    ai_functions.serve(alice, thread_name="alice")
+```
+
+```python
+# bob.py
+import ai_functions
+from ai_functions import ai_function
+
+
+@ai_function(str, structured_output=False)
+def bob(message: str):
+    """You are Bob. Answer geography questions concisely. {message}"""
+
+
+if __name__ == "__main__":
+    ai_functions.serve(bob, thread_name="bob")
+```
+
+Launch each script in its own terminal:
+
+```bash
+$ python alice.py
+$ python bob.py
+```
+
+A script that does not call `serve` itself can still be hosted directly from
+the command line. `ai-functions run` loads a script, finds its `main`
+spawnable, hosts it on the running coordinator, and prints the new thread id
+and how to drive it:
+
+```bash
+$ ai-functions run alice.py
+hosting 'main' as thread-a3f2…
+  submit:  ai-functions submit thread-a3f2… "<prompt>"
+  attach:  ai-functions attach thread-a3f2…
+  (Ctrl-C to stop)
+```
+
+Alice and Bob are now hosted in separate processes, both registered with the
+same coordinator. Alice's `send_message` tool (installed by default on every
+`AIFunction`) can locate Bob by calling `list_threads` and route a message to
+him; Bob's reply flows back through the same coordinator.
+
+### CLI commands
+
+With agents running, the `ai-functions` command-line tool drives them from the
+terminal:
+
+```bash
+$ ai-functions ps
+THREAD ID                STATUS       SHAPE        NAME                 WORKER
+thread-a3f2…             idle         str_prompt   alice                worker-91b4…
+thread-77c1…             idle         str_prompt   bob                  worker-c802…
+
+$ ai-functions submit thread-a3f2 "pick a city"
+How about Kyoto?
+
+$ ai-functions submit thread-a3f2 "pick a city" --json   # result + token usage + timing
+$ ai-functions notify thread-a3f2 "remember: stay in Asia"  # side-channel, no cycle
+
+$ ai-functions logs thread-a3f2 --follow
+  ▷ user: pick a city
+  ◁ assistant: How about Kyoto?
+  Σ tokens: in=142 out=14 (total=156)
+
+$ ai-functions attach thread-a3f2      # open a live TUI for this thread
+$ ai-functions kill thread-a3f2        # graceful terminate
+$ ai-functions kill thread-77c1 --now  # hard stop
+```
+
+`submit` starts one cycle with the given prompt and blocks until it resolves,
+printing the typed result; `--json` enriches that with token usage and timing.
+`notify` is the side channel from [Cross-thread messaging](#cross-thread-messaging):
+it hands the thread a message without starting a cycle. `attach` opens a TUI
+with two views — a clean conversation view and a raw event view — so a long log
+stays readable.
+
 ## Under the hood
 
 This section is for readers who want to follow an operation through the library's internals. It traces four representative data flows — a local `run`, a remote `run`, a `send_message` between workers, and an event fan-out — end to end. No new APIs are introduced; every name below is defined in the preceding sections or in the API reference.

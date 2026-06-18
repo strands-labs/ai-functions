@@ -34,6 +34,11 @@ from typing import TYPE_CHECKING, Any, Self, cast, final
 from ..protocols import Coordinator, Spawnable
 from ..runtime.coordinator import InMemoryCoordinator
 from ..types import Event, ThreadId, WorkerId
+from ._transport_config import (
+    MAX_MESSAGE_BYTES,
+    PING_INTERVAL_SECONDS,
+    PING_TIMEOUT_SECONDS,
+)
 from .channel import (
     WebsocketTransport,
     WireChannel,
@@ -156,7 +161,14 @@ class CoordinatorEndpoint:
         async def _handler(ws: Any) -> None:  # pyright: ignore[reportExplicitAny]
             await self._serve_connection(ws)
 
-        self._server = await websockets.serve(_handler, host, port)
+        self._server = await websockets.serve(
+            _handler,
+            host,
+            port,
+            max_size=MAX_MESSAGE_BYTES,
+            ping_interval=PING_INTERVAL_SECONDS,
+            ping_timeout=PING_TIMEOUT_SECONDS,
+        )
         self._host = host
         # When the caller asks for port 0, the OS assigns a free port; read it
         # back from the listening socket so self.url reflects reality.

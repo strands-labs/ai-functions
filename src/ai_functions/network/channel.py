@@ -16,6 +16,7 @@ that hosts a worker) — the channel itself is symmetric.
 from __future__ import annotations
 
 import asyncio
+import logging
 import uuid
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
@@ -39,6 +40,44 @@ from .wire import (
 
 Handler = Callable[[dict[str, Any]], Awaitable[Any]]  # pyright: ignore[reportExplicitAny]
 EventCallback = Callable[[Event], None]
+
+_logger: logging.Logger = logging.getLogger("ai_functions.network.channel")
+
+# WebSocket close codes that represent a clean, expected shutdown. Anything
+# else (1006 abnormal, 1009 too-big, 1011 keepalive/internal, …) is logged at
+# ERROR so a mid-run disconnect leaves a legible reason behind.
+_CLEAN_CLOSE_CODES: frozenset[int] = frozenset({1000, 1001})
+
+
+def _describe_transport_close(exc: BaseException) -> tuple[str, bool]:
+    """Summarise why the transport's ``recv`` raised, for logging.
+
+    Pulls the WebSocket close code and reason out of a ``websockets``
+    ``ConnectionClosed`` exception when present, so an opaque "connection
+    closed" becomes e.g. "code 1009 (message too big): ..." — the single
+    most useful fact when diagnosing a mid-run drop.
+
+    Args:
+        exc: The exception raised by ``Transport.recv``.
+
+    Returns:
+        A ``(description, is_clean)`` pair. ``description`` is a one-line
+        human summary; ``is_clean`` is ``True`` only when the close carried
+        a normal/going-away code (1000 / 1001), so the caller can pick the
+        log level.
+    """
+    rcvd = getattr(exc, "rcvd", None)
+    sent = getattr(exc, "sent", None)
+    close = rcvd if rcvd is not None else sent
+    code = getattr(close, "code", None)
+    if code is None:
+        # Not a websockets ConnectionClosed (e.g. a raw OSError) — no close
+        # frame to inspect; report the exception itself.
+        return f"{type(exc).__name__}: {exc}", False
+    reason = getattr(close, "reason", "") or ""
+    origin = "peer" if rcvd is not None else "local"
+    detail = f": {reason}" if reason else ""
+    return f"code {code} from {origin}{detail}", code in _CLEAN_CLOSE_CODES
 
 
 # Map well-known exception classes to / from their type names on the wire.
@@ -259,7 +298,18 @@ class WireChannel:
             while not self._closed:
                 try:
                     text = await self._transport.recv()
-                except Exception:  # noqa: BLE001 -- any transport close ends the loop
+                except Exception as exc:  # noqa: BLE001 -- any transport close ends the loop
+                    # Surface *why* the transport closed. The close code/reason
+                    # is the most diagnostic fact about a mid-run drop and is
+                    # otherwise lost when the loop simply breaks. A clean
+                    # going-away close is expected (DEBUG); anything else —
+                    # 1006 abnormal, 1009 too-big, 1011 keepalive — is logged at
+                    # ERROR so it is never silent again.
+                    description, is_clean = _describe_transport_close(exc)
+                    if is_clean:
+                        _logger.debug("wire transport closed (%s)", description)
+                    else:
+                        _logger.error("wire transport closed abnormally (%s)", description)
                     break
                 try:
                     frame = _FRAME_ADAPTER.validate_json(text)

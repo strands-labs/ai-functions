@@ -38,6 +38,11 @@ from ..types import (
     ThreadStatus,
     WorkerId,
 )
+from ._transport_config import (
+    MAX_MESSAGE_BYTES,
+    PING_INTERVAL_SECONDS,
+    PING_TIMEOUT_SECONDS,
+)
 from .channel import (
     EVENT_ADAPTER,
     WebsocketTransport,
@@ -171,7 +176,12 @@ class CoordinatorClient(Coordinator):
         """
         import websockets
 
-        ws = await websockets.connect(url)
+        ws = await websockets.connect(
+            url,
+            max_size=MAX_MESSAGE_BYTES,
+            ping_interval=PING_INTERVAL_SECONDS,
+            ping_timeout=PING_TIMEOUT_SECONDS,
+        )
         transport = WebsocketTransport(ws)
         self = cls(transport)
         _ = await self._channel.__aenter__()
