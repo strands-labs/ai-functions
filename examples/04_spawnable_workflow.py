@@ -74,10 +74,7 @@ class ReportWorkflow:
         ]
         try:
             written = await asyncio.gather(
-                *[
-                    h.run(title=title, topic=topic)
-                    for h, title in zip(writer_handles, sections, strict=True)
-                ]
+                *[h.run(title=title, topic=topic) for h, title in zip(writer_handles, sections, strict=True)]
             )
         finally:
             await asyncio.gather(*[h.terminate_now() for h in writer_handles])

@@ -14,12 +14,14 @@ from ai_functions.ai_thread import PostConditionResult
 
 # ── Simple: docstring prompt, primitive output ───────────────────
 
+
 @ai_function(float)
 def calculator(expression: str):
     """Evaluate the mathematical expression: {expression}"""
 
 
 # ── Structured: explicit prompt, pydantic output ────────────────
+
 
 class TranslationResult(BaseModel):
     translated: str
@@ -33,13 +35,15 @@ def translate(text: str, target_language: str) -> str:
 
 # ── With post-conditions ────────────────────────────────────────
 
+
 def confidence_above_threshold(result: TranslationResult, **kwargs: object) -> PostConditionResult | None:
     if result.confidence > 0.8:
         return None
     return PostConditionResult(passed=False, message=f"Confidence {result.confidence} below 0.8")
 
 
-@ai_function(TranslationResult,
+@ai_function(
+    TranslationResult,
     post_conditions=[confidence_above_threshold],
     max_attempts=3,
 )

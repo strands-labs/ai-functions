@@ -20,17 +20,19 @@ class ResearchPlan(BaseModel):
     subtasks: list[str]
 
 
-@ai_function(ResearchPlan)
+# These single-purpose agents don't message peers, so we disable the default
+# coordinator tools (``list_threads`` / ``send_message``; see examples 05/06).
+@ai_function(ResearchPlan, coordinator_tools_enabled=False)
 def planner(topic: str):
     """Break down the research topic into 2-3 subtasks: {topic}"""
 
 
-@ai_function(str)
+@ai_function(str, coordinator_tools_enabled=False)
 def researcher(subtask: str):
     """Research this subtask thoroughly: {subtask}"""
 
 
-@ai_function(str)
+@ai_function(str, coordinator_tools_enabled=False)
 def synthesizer(findings: str):
     """Synthesize these findings into a summary:\n\n{findings}"""
 
@@ -69,10 +71,9 @@ async def main() -> None:
     ]
 
     # Run all researchers in parallel.
-    findings = await asyncio.gather(*[
-        h.run(subtask=task)
-        for h, task in zip(researcher_handles, plan.subtasks, strict=True)
-    ])
+    findings = await asyncio.gather(
+        *[h.run(subtask=task) for h, task in zip(researcher_handles, plan.subtasks, strict=True)]
+    )
 
     # Synthesize.
     synth_h = await worker.spawn_locally(synthesizer, thread_name="synthesizer")

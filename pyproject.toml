@@ -35,6 +35,10 @@ dependencies = [
     "rich>=13.7",
     "textual>=0.70",
     "platformdirs>=4.0",
+    # Memory/optimizer rendering serializes parameter values to YAML.
+    "pyyaml>=6.0",
+    "smolagents>=1.24.0",
+    "rank-bm25>=0.2.2",
 ]
 
 [project.optional-dependencies]
@@ -47,6 +51,9 @@ claude-code = [
 ]
 kiro = [
     "agent-client-protocol==0.10.1",
+]
+agentcore = [
+    "bedrock-agentcore>=1.6.0",
 ]
 
 [project.scripts]
@@ -76,6 +83,14 @@ dependencies = [
     "textual>=0.70",
     "platformdirs>=4.0",
     "agent-client-protocol==0.10.1",
+    "pyyaml>=6.0",
+    "bedrock-agentcore>=1.6.0",
+    "rank-bm25>=0.2.2",
+    "smolagents>=1.24.0",
+    "strands-agents-tools>=0.8.2",
+    "scipy>=1.11",
+    "yfinance>=0.2.40",
+    "plotly>=5.20",
 ]
 
 [tool.hatch.envs.default.scripts]
@@ -104,10 +119,17 @@ ignore = ["D107"]
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["D"]
 "examples/**/*.py" = ["D"]
+# Verbatim DS-1000 problem data: long embedded prompt/test strings can't wrap.
+"examples/_scipy_problems.py" = ["D", "E501"]
+"examples/_pandas_problems.py" = ["D", "E501"]
 "src/ai_functions/network/client.py" = ["D101", "D102", "D105"]
 "src/ai_functions/network/endpoint.py" = ["D101", "D102", "D105"]
 "src/ai_functions/network/channel.py" = ["D101", "D102", "D105"]
 "src/ai_functions/network/wire_methods.py" = ["D101"]
+# The gradient-feedback models and rendering helpers are below the public
+# surface (the spec documents build_graph + TextGradOptimizer only).
+"src/ai_functions/optimizer/textgrad.py" = ["D101"]
+"src/ai_functions/optimizer/rendering.py" = ["D103"]
 
 [tool.ruff.format]
 docstring-code-format = true

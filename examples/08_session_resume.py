@@ -23,7 +23,7 @@ on each thread, then a resumed follow-up turn that reloads both logs from
 disk — so the save/resume round-trip is visible end to end without
 re-invoking the script::
 
-    python examples/09_session_resume.py --session-dir /tmp/ai_functions-demo
+    python examples/08_session_resume.py --session-dir /tmp/ai_functions-demo
 
 The work is factored into :func:`run_session` so the same flow runs both
 from the CLI (against a real model) and from the integration test

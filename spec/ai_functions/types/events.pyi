@@ -64,6 +64,8 @@ class EventKind(enum.StrEnum):
 
     RESULT = "result"
 
+    PARAMETER_RECALLED = "parameter_recalled"
+
 
 class TokenUsage(BaseModel):
     """Per-call token accounting reported by an executor."""
@@ -252,7 +254,7 @@ class ToolResultEvent(BaseEvent):
     """Id of the ``toolUse`` block this result corresponds to."""
     status: ToolResultStatus
     """``"success"`` or ``"error"``, matching Strands' ``ToolResult.status``."""
-    content: list[ToolResultContent]
+    content: list[ToolResultContent] = Field(default_factory=list[ToolResultContent])
     """Strands-format content blocks produced by the tool."""
 
 
@@ -365,6 +367,46 @@ class ResultEvent(BaseEvent):
     """Thread-serialized result; opaque to the runtime and coordinator."""
 
 
+# ── Memory / optimization ──
+
+
+class ParameterRecalledEvent(BaseEvent):
+    """A memory parameter was recalled into a thread's execution.
+
+    Emitted directly by ``MemoryBackend.recall`` / ``query`` / ``search`` the
+    moment the read happens, stamped with the caller-supplied ``thread_id``.
+    Because ``append_event`` creates a thread's log on demand, this event may
+    be appended *before* the named thread spawns; the event is simply waiting
+    in the log when the cycle starts.
+
+    Consumed only by :func:`build_graph`, which matches ``backend_id`` back to
+    a live backend to rebuild a ``ParameterNode``. It is **not** a
+    :data:`RenderableEvent`: ``reconstruct_messages`` filters it out, so it
+    never contributes a message and never shifts a summarization boundary or
+    invalidates the prompt cache (I9 — non-renderable events are inert to
+    reconstruction).
+
+    Invariants:
+        - I9 — non-renderable; inert to message reconstruction.
+    """
+
+    kind: Literal[EventKind.PARAMETER_RECALLED] = EventKind.PARAMETER_RECALLED
+    name: str
+    """Parameter name (supports nested ``a/b/c`` paths)."""
+    value: object = None
+    """Serialized recalled value; deserialized via ``backend.deserialize_value``."""
+    derivation: Literal["full", "query", "search"] = "full"
+    """How the value was produced: full recall, LLM query, or top-k search."""
+    requires_grad: bool = True
+    """Whether the optimizer may propagate feedback into this parameter."""
+    backend_id: str = ""
+    """``"ClassName:actor_id"`` identifying the originating backend."""
+    description: str = ""
+    """Human-readable description carried from the schema field."""
+    meta: dict[str, object] = Field(default_factory=dict[str, object])
+    """Backend-specific data (e.g. query text, top_k, scores)."""
+
+
 # ── User-defined extension ──
 
 
@@ -394,7 +436,7 @@ SystemEvent = Annotated[
     MessageAssistantCompleteEvent |
     ToolCallEvent | ToolResultEvent |
     ApprovalRequestEvent | ApprovalDecidedEvent | SessionCreatedEvent | SessionResetEvent | ContextSummarizedEvent |
-    TokenUsageEvent | ResultEvent,
+    TokenUsageEvent | ResultEvent | ParameterRecalledEvent,
     Field(discriminator="kind")
 ]
 

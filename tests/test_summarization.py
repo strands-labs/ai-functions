@@ -327,6 +327,40 @@ def test_aithread_rejects_user_supplied_conversation_manager() -> None:
         AIThread(_greet, bad_config)
 
 
+def test_build_agent_user_callback_handler_does_not_collide() -> None:
+    """A user ``callback_handler`` in agent_kwargs must not double-pass to Agent.
+
+    The runtime passes its streaming ``callback_handler`` explicitly; leaving a
+    user-supplied one in the forwarded ``agent_kwargs`` used to raise
+    ``TypeError: got multiple values for keyword argument 'callback_handler'``.
+    """
+    import dataclasses as _dc
+
+    from ai_functions.ai_thread.ai_thread import AIThread
+    from ai_functions.ai_thread.config import AgentKwargs
+
+    calls: list[object] = []
+
+    def user_cb(**kwargs: object) -> None:
+        calls.append(kwargs)
+
+    @ai_function(str, structured_output=False)
+    def _greet() -> str:
+        return "hi"
+
+    config = _dc.replace(_greet.config, agent_kwargs=AgentKwargs(callback_handler=user_cb))
+    thread = AIThread(_greet, config)
+
+    # Runtime callback wins when provided (no collision with the user's).
+    runtime_cb = lambda **_: None  # noqa: E731
+    agent = thread._build_agent([], config, None, runtime_cb)  # noqa: SLF001
+    assert agent.callback_handler is runtime_cb
+
+    # With no runtime callback, the user-supplied one is honored.
+    agent2 = thread._build_agent([], config, None, None)  # noqa: SLF001
+    assert agent2.callback_handler is user_cb
+
+
 async def test_strategy_rejects_forking_with_structured_output() -> None:
     """summarize_by_forking=True + structured_output=True is rejected at summarize()."""
     from ai_functions.ai_thread.config import ThreadConfig
@@ -482,3 +516,133 @@ async def test_summarization_flow_emits_context_summarized_event() -> None:
         first = new_history[0]
         assert isinstance(first, MessageUserEvent)
         assert first.text == "SUM"
+
+
+async def test_proactive_summarization_fires_on_token_threshold() -> None:
+    """summarization_threshold compacts accumulated history BEFORE a model call.
+
+    Proactive summarization is a cross-cycle mechanism: it runs at the entry of
+    each cycle over the logged history. Here a scripted model returns a long
+    answer on the first ``run`` (logged), so the second ``run`` enters with a
+    history above the tiny threshold and compacts proactively — no
+    ``ContextWindowOverflowException`` involved.
+    """
+    long_answer = Turn(text="word " * 400)  # ~400 tokens, logged after cycle 1
+    short_answer = Turn(text="second-answer")
+    summary_turn = Turn(text="<summary>COMPACTED</summary>")
+
+    from ai_functions.testing.scripted_model import _stream_turn
+
+    class _CompositeModel(Model):
+        def __init__(self) -> None:
+            super().__init__()
+            self._answers = 0
+
+        def update_config(self, **_config: Any) -> None:  # pyright: ignore[reportExplicitAny, reportAny]
+            pass
+
+        def get_config(self) -> dict[str, object]:
+            return {}
+
+        def stream(
+            self,
+            messages: Messages,
+            tool_specs: list[ToolSpec] | None = None,
+            system_prompt: str | None = None,
+            *,
+            tool_choice: ToolChoice | None = None,
+            system_prompt_content: list[SystemContentBlock] | None = None,
+            invocation_state: dict[str, Any] | None = None,  # pyright: ignore[reportExplicitAny]
+            **kwargs: Any,  # pyright: ignore[reportExplicitAny, reportAny]
+        ) -> AsyncIterable[StreamEvent]:
+            del tool_specs, tool_choice, system_prompt_content, invocation_state, kwargs
+            if system_prompt and "summarization" in system_prompt.lower():
+                return _stream_turn(summary_turn)
+            self._answers += 1
+            return _stream_turn(long_answer if self._answers == 1 else short_answer)
+
+        def structured_output(self, *args: object, **kwargs: object) -> Any:  # pyright: ignore[reportExplicitAny]
+            del args, kwargs
+            raise NotImplementedError
+
+    # Preserve only a tiny tail so ONE compaction drops the history below the
+    # threshold (otherwise proactive summarization re-fires up to the cap).
+    strategy = DefaultSummarizationStrategy(
+        summarize_by_forking=False,
+        preserve_min_messages=1,
+        preserve_min_tokens=0,
+        preserve_max_tokens=20,
+    )
+
+    @ai_function(
+        str,
+        structured_output=False,
+        model=cast(Any, _CompositeModel()),  # pyright: ignore[reportExplicitAny]
+        summarization_strategy=strategy,
+        summarization_threshold=100,  # first answer (~400 tokens) will exceed this
+    )
+    def _ask(q: str) -> str:
+        return q
+
+    async with RuntimeHarness() as h:
+        handle = await h.spawn(_ask)
+        first = await handle.run("start")  # logs a long assistant answer
+        assert first.strip() == long_answer.text.strip()
+
+        events_after_first = await h.worker.coordinator.get_events(handle.id)
+        assert not [e for e in events_after_first if isinstance(e, ContextSummarizedEvent)]
+
+        second = await handle.run("continue")  # enters with a large history → proactive compaction
+        assert second.strip() == "second-answer"
+
+        events = await h.worker.coordinator.get_events(handle.id)
+        summaries = [e for e in events if isinstance(e, ContextSummarizedEvent)]
+        assert len(summaries) == 1  # compacted proactively, before the second answer
+        assert isinstance(summaries[0].new_history[0], MessageUserEvent)
+        assert summaries[0].new_history[0].text == "COMPACTED"
+
+
+async def test_no_proactive_summarization_when_threshold_unset() -> None:
+    """With summarization_threshold=None (default), a large history is NOT compacted."""
+    answer_turn = Turn(text="plain-answer")
+
+    from ai_functions.testing.scripted_model import _stream_turn
+
+    class _AnswerModel(Model):
+        def update_config(self, **_config: Any) -> None:  # pyright: ignore[reportExplicitAny, reportAny]
+            pass
+
+        def get_config(self) -> dict[str, object]:
+            return {}
+
+        def stream(
+            self,
+            messages: Messages,
+            tool_specs: list[ToolSpec] | None = None,
+            system_prompt: str | None = None,
+            *,
+            tool_choice: ToolChoice | None = None,
+            system_prompt_content: list[SystemContentBlock] | None = None,
+            invocation_state: dict[str, Any] | None = None,  # pyright: ignore[reportExplicitAny]
+            **kwargs: Any,  # pyright: ignore[reportExplicitAny, reportAny]
+        ) -> AsyncIterable[StreamEvent]:
+            del tool_specs, system_prompt, tool_choice, system_prompt_content, invocation_state, kwargs
+            return _stream_turn(answer_turn)
+
+        def structured_output(self, *args: object, **kwargs: object) -> Any:  # pyright: ignore[reportExplicitAny]
+            del args, kwargs
+            raise NotImplementedError
+
+    @ai_function(str, structured_output=False, model=cast(Any, _AnswerModel()))  # pyright: ignore[reportExplicitAny]
+    def _ask(q: str) -> str:
+        return q
+
+    async with RuntimeHarness() as h:
+        handle = await h.spawn(_ask)
+        await handle.notify("x " * 500)
+        result = await handle.run("continue")
+        assert result.strip() == "plain-answer"
+
+        events = await h.worker.coordinator.get_events(handle.id)
+        summaries = [e for e in events if isinstance(e, ContextSummarizedEvent)]
+        assert len(summaries) == 0  # default is reactive-only: no proactive compaction

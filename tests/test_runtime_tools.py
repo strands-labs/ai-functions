@@ -13,7 +13,7 @@ import json
 
 from ai_functions import ai_function
 from ai_functions.testing import RuntimeHarness, ScriptedModel, Turn
-from ai_functions.types import EventKind
+from ai_functions.types import EventKind, ThreadId
 from ai_functions.types.events import MessageUserEvent
 
 
@@ -29,6 +29,29 @@ def _tool_result_text(event) -> str:  # type: ignore[no-untyped-def]
     text = block.get("text") if isinstance(block, dict) else None
     assert isinstance(text, str), f"TOOL_RESULT content missing text: {event.content!r}"
     return text
+
+
+async def test_coordinator_tools_can_be_disabled() -> None:
+    """``coordinator_tools_enabled=False`` suppresses list_threads/send_message."""
+
+    @ai_function(str, structured_output=False, coordinator_tools_enabled=False)
+    def _solo(message: str) -> str:
+        """Answer directly: {message}"""
+
+    async with RuntimeHarness() as h:
+        # The agent tries to call list_threads; with the tools disabled the tool
+        # is not registered, so no TOOL_RESULT is produced for it.
+        solo = await h.spawn(
+            _solo.replace(model=ScriptedModel([Turn(tool_calls=(("list_threads", {}),)), Turn(text="done")])),
+            thread_name="solo",
+        )
+        await solo.run("hi")
+
+        # The list_threads call hits an unknown tool (not registered), so no
+        # successful listing (a JSON payload with a "threads" array) is produced.
+        tool_results = [e for e in await h.events(solo.id) if e.kind == EventKind.TOOL_RESULT]
+        for e in tool_results:
+            assert e.status == "error" or '"threads"' not in _tool_result_text(e)
 
 
 async def test_list_threads_shows_peers_and_marks_self() -> None:
@@ -91,6 +114,117 @@ async def test_send_message_wait_returns_peer_reply() -> None:
         # Bob actually ran a cycle.
         bob_completes = [e for e in await h.events(bob.id) if e.kind == EventKind.COMPLETED]
         assert len(bob_completes) == 1
+
+
+async def test_send_message_wait_on_busy_peer_queues_and_succeeds() -> None:
+    """``mode='wait'`` on a busy peer that is NOT waiting back is allowed.
+
+    A blocking wait on a merely-busy peer just enqueues a cycle behind the
+    peer's current one; when that drains, the enqueued cycle runs and its reply
+    is returned. This is latency, not deadlock, so the guard must not refuse it.
+    """
+    async with RuntimeHarness() as h:
+        # Bob's first cycle is held mid-flight on a barrier (status RUNNING); his
+        # second cycle is the one alice's wait enqueues.
+        bob = await h.spawn(
+            _chat.replace(
+                model=ScriptedModel(
+                    [
+                        Turn(text="bob first cycle", await_before="hold_bob"),
+                        Turn(text="pong to alice"),
+                    ],
+                ),
+            ),
+            thread_name="bob",
+        )
+
+        async def _run_bob() -> object:
+            return await bob.run("start bob")
+
+        bob_task = asyncio.create_task(_run_bob())
+        await h.wait_for(bob.id, EventKind.STARTED, timeout=2.0)
+
+        alice_model = ScriptedModel(
+            [
+                Turn(
+                    tool_calls=(("send_message", {"thread_id": str(bob.id), "message": "ping", "mode": "wait"}),),
+                ),
+                Turn(text="alice is done"),
+            ],
+        )
+        alice = await h.spawn(_chat.replace(model=alice_model), thread_name="alice")
+
+        alice_fut = alice.run("ask busy bob")
+        # Give alice's wait a moment to enqueue its cycle behind bob's, then let
+        # bob's held cycle drain so the enqueued one can run.
+        await asyncio.sleep(0.05)
+        h.release("hold_bob")
+
+        result = await asyncio.wait_for(alice_fut, timeout=5.0)
+        assert result.strip() == "alice is done"
+
+        # Alice got bob's reply — no deadlock refusal.
+        tool_results = [e for e in await h.events(alice.id) if e.kind == EventKind.TOOL_RESULT]
+        ack = _tool_result_text(tool_results[0])
+        assert not ack.startswith("error:")
+        assert "pong to alice" in ack
+
+        # Bob ran both cycles: his own, then the one alice enqueued.
+        bob_completes = [e for e in await h.events(bob.id) if e.kind == EventKind.COMPLETED]
+        assert len(bob_completes) == 2
+        await asyncio.wait_for(bob_task, timeout=5.0)
+
+
+async def test_send_message_wait_mutual_is_refused_on_one_side() -> None:
+    """Two peers waiting on each other: exactly one wait is refused, neither hangs.
+
+    Alice and bob each issue ``send_message(mode='wait')`` at the other while
+    both are running. On the single event loop the check-and-register is atomic,
+    so whichever issues first registers its waits-for edge and the other observes
+    the cycle and is refused — breaking the deadlock on exactly one side.
+    """
+    # Explicit ids so each peer's script can reference the other up front.
+    alice_id = ThreadId("alice")
+    bob_id = ThreadId("bob")
+
+    # Each thread: wait on the peer, then trailing turns. The extra turns absorb
+    # the follow-up cycle the winning side enqueues on its target (which side
+    # wins is scheduling-dependent), so neither model runs out of turns.
+    def _script(peer_id: str, name: str) -> ScriptedModel:
+        return ScriptedModel(
+            [
+                Turn(
+                    await_before="go",
+                    tool_calls=(("send_message", {"thread_id": peer_id, "message": "ping", "mode": "wait"}),),
+                ),
+                Turn(text=f"{name} done"),
+                Turn(text=f"{name} reply to ping"),
+            ],
+        )
+
+    async with RuntimeHarness() as h:
+        alice = await h.spawn(
+            _chat.replace(model=_script(str(bob_id), "alice")), thread_id=alice_id, thread_name="alice"
+        )
+        bob = await h.spawn(_chat.replace(model=_script(str(alice_id), "bob")), thread_id=bob_id, thread_name="bob")
+
+        alice_fut = alice.run("start alice")
+        bob_fut = bob.run("start bob")
+        await h.wait_for(alice.id, EventKind.STARTED, timeout=2.0)
+        await h.wait_for(bob.id, EventKind.STARTED, timeout=2.0)
+
+        # Both are parked at their send_message turn; release them together.
+        h.release("go")
+
+        # Neither hangs: the deadlock is broken on one side.
+        await asyncio.wait_for(alice_fut, timeout=5.0)
+        await asyncio.wait_for(bob_fut, timeout=5.0)
+
+        alice_tool_results = [e for e in await h.events(alice.id) if e.kind == EventKind.TOOL_RESULT]
+        bob_tool_results = [e for e in await h.events(bob.id) if e.kind == EventKind.TOOL_RESULT]
+        acks = [_tool_result_text(e) for e in (*alice_tool_results, *bob_tool_results)]
+        refusals = [a for a in acks if a.startswith("error:") and "deadlock" in a.lower()]
+        assert len(refusals) == 1, f"expected exactly one deadlock refusal, got {acks!r}"
 
 
 async def test_send_message_fire_and_forget_returns_immediately() -> None:

@@ -3,6 +3,13 @@ name = "ai-functions-examples"
 version = "0.1.0"
 dependencies = [
     "strands-ai-functions",
+    "pandas>=2.0",
+    "numpy>=1.24",
+    "scipy>=1.11",
+    "yfinance>=0.2.40",
+    "plotly>=5.20",
+    "sympy>=1.14.0",
+    "strands-agents-tools>=0.8.2",
 ]
 
 [tool.uv.sources]

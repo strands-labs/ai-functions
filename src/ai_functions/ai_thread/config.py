@@ -37,10 +37,10 @@ class CodeExecutionMode(enum.StrEnum):
     """Code-execution mode for Python tool calls."""
 
     LOCAL = "local"
-    """Execute code in the current process (default)."""
+    """Execute code in a sandboxed in-process Python executor."""
 
     DISABLED = "disabled"
-    """No code execution — rely solely on structured output."""
+    """No code execution — rely solely on structured output (default)."""
 
 
 class AgentKwargs(TypedDict, total=False):
@@ -51,10 +51,9 @@ class AgentKwargs(TypedDict, total=False):
     conversation history through the event log and installs
     ``NullConversationManager`` on every ``Agent`` it builds; a
     user-supplied manager would mutate ``agent.messages`` behind the
-    runtime's back and desynchronize it from the event log, breaking I7
-    and I9.
-    Setting this key to any non-``None`` value is rejected at config
-    resolution with ``AIFunctionError``.
+    runtime's back and desynchronize it from the event log. Setting this
+    key to any non-``None`` value is rejected at config resolution with
+    ``AIFunctionError``.
     """
 
     messages: Messages | None
@@ -79,6 +78,9 @@ class ThreadKwargs(TypedDict, total=False):
     post_conditions: list[PostCondition]
     max_attempts: int
     structured_output: bool
+    code_execution_mode: CodeExecutionMode
+    code_executor_additional_imports: list[str]
+    code_executor_kwargs: dict[str, Any]
     agent_kwargs: AgentKwargs
     name: str | None
     description: str | None
@@ -86,6 +88,8 @@ class ThreadKwargs(TypedDict, total=False):
     thread_name: str | None
     config_hook: Callable[[ThreadContext], ThreadKwargs] | None
     summarization_strategy: SummarizationStrategy | None
+    summarization_threshold: int | None
+    coordinator_tools_enabled: bool
 
 
 class ThreadMergedKwargs(AgentKwargs, ThreadKwargs):
@@ -115,6 +119,27 @@ class ThreadConfig:
     """Whether to use structured output mode (agent has to call a tool to provide an answer).
     Can be False only if the output type is `str`.
     """
+
+    code_execution_mode: CodeExecutionMode = CodeExecutionMode.DISABLED
+    """Whether the agent may execute Python via a sandboxed ``python_executor`` tool.
+
+    ``DISABLED`` (default): no code execution; the answer comes from structured
+    output. ``LOCAL``: a smolagents-backed AST-sandboxed executor is added to
+    the agent's tools, seeded with the cycle's bound arguments (including any
+    ``Procedural`` parameter code), and the agent may return its answer by
+    calling ``final_answer(...)`` inside executed code. Requires the optional
+    ``smolagents`` dependency (``pip install strands-ai-functions[procedural]``).
+    """
+
+    code_executor_additional_imports: list[str] = field(default_factory=list)
+    """Extra modules the ``python_executor`` sandbox may import, beyond the
+    built-in ``SAFE_BUILTINS`` allowlist (e.g. ``["sympy"]``). Only consulted
+    when ``code_execution_mode`` is ``LOCAL``."""
+
+    code_executor_kwargs: dict[str, Any] = field(default_factory=dict)
+    """Extra keyword arguments forwarded to the underlying smolagents
+    ``LocalPythonExecutor``. Only consulted when ``code_execution_mode`` is
+    ``LOCAL``."""
 
     agent_kwargs: AgentKwargs = field(default_factory=AgentKwargs)
     """Extra kwargs forwarded to ``strands.Agent``."""
@@ -165,6 +190,18 @@ class ThreadConfig:
     of the strategy itself. Configure them by constructing your own
     :class:`DefaultSummarizationStrategy`.
     """
+
+    summarization_threshold: int | None = None
+    """Proactively summarize when the estimated history exceeds this many tokens.
+
+    ``None`` (default) is purely reactive: history is compacted only on a
+    ``ContextWindowOverflowException``. When set, the runtime compacts at cycle
+    entry before the model call. Keep it above the strategy's preserved tail
+    (``DefaultSummarizationStrategy.preserve_max_tokens``) so it converges."""
+
+    coordinator_tools_enabled: bool = True
+    """Auto-inject the coordinator tools (``list_threads`` / ``send_message``).
+    Set ``False`` for a single-purpose agent that should not talk to peers."""
 
 
 def _check_config_fields_match_kwargs() -> None:

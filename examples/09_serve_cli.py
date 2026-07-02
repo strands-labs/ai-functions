@@ -14,7 +14,7 @@ Run it as a hosted agent::
     ai-functions server
 
     # Terminal 2 — host this agent on that coordinator.
-    ai-functions run examples/10_serve_cli.py
+    ai-functions run examples/09_serve_cli.py
 
     # Terminal 3 — find the thread, talk to it, watch it.
     ai-functions ps
@@ -30,7 +30,7 @@ Run it directly instead, and it behaves the same way via
 agent, and blocks until Ctrl-C::
 
     ai-functions server                  # terminal 1
-    python examples/10_serve_cli.py      # terminal 2 (equivalent to `run`)
+    python examples/09_serve_cli.py      # terminal 2 (equivalent to `run`)
 """
 
 import ai_functions
@@ -42,7 +42,7 @@ def assistant(message: str) -> str:
     """{message}"""
 
 
-# ``ai-functions run examples/10_serve_cli.py`` hosts this object. The
+# ``ai-functions run examples/09_serve_cli.py`` hosts this object. The
 # attribute name ``main`` is the default ``--attr`` that ``run`` resolves.
 main = assistant
 

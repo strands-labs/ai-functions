@@ -43,6 +43,60 @@ from strands.types.tools import AgentTool
 
 from ..types import InputShape, ThreadContext, ThreadId
 
+# ── Deadlock detection for blocking ``send_message(mode="wait")`` ────────────
+#
+# A blocking wait enqueues a cycle behind the peer's single serial dispatcher
+# and suspends the caller's cycle until it drains. On its own that is only
+# latency — the peer finishes what it is doing, then runs the enqueued cycle.
+# It deadlocks *only* when the peer is (directly or transitively) already
+# blocked in a wait back on the caller, so the two dispatchers can never drain
+# each other.
+#
+# We track the "waits-for" graph of in-flight blocking waits as
+# ``{coordinator_id: {waiter_id: target_id}}`` and refuse a new wait only when
+# committing to it would close a cycle. Each waiter has at most one outstanding
+# edge: while suspended in a wait its cycle cannot issue another tool call. The
+# check-and-register step runs with no ``await`` in between, so on the single
+# event loop it is atomic — of two peers waiting on each other, exactly one
+# registers first and the other observes that edge and refuses.
+#
+# Keyed by coordinator identity: peers that can actually deadlock this way
+# share one coordinator object (the in-memory coordinator the worker's executor
+# holds). Waits across separate ``CoordinatorClient`` instances are not tracked,
+# matching the existing single-coordinator scope of these tools.
+_wait_edges: dict[int, dict[str, str]] = {}
+
+
+def _would_close_wait_cycle(coord_key: int, waiter: str, target: str) -> bool:
+    """Return whether adding ``waiter -> target`` closes a wait-for cycle.
+
+    Walks the existing waits-for chain from ``target``; a cycle would form iff
+    that chain leads back to ``waiter``. The chain is acyclic by construction
+    (every edge passed this check before being added), but a ``seen`` guard
+    keeps the walk finite regardless.
+    """
+    edges = _wait_edges.get(coord_key)
+    if not edges:
+        return False
+    seen: set[str] = set()
+    cur: str | None = target
+    while cur is not None and cur not in seen:
+        if cur == waiter:
+            return True
+        seen.add(cur)
+        cur = edges.get(cur)
+    return False
+
+
+def _release_wait_edge(coord_key: int, waiter: str) -> None:
+    """Drop ``waiter``'s outstanding wait edge, pruning empty coordinator maps."""
+    edges = _wait_edges.get(coord_key)
+    if edges is None:
+        return
+    _ = edges.pop(waiter, None)
+    if not edges:
+        _ = _wait_edges.pop(coord_key, None)
+
 
 def coordinator_tools(ctx: ThreadContext) -> Sequence[AgentTool]:
     """Build the list of coordinator-facing tools bound to ``ctx``.
@@ -124,10 +178,31 @@ def coordinator_tools(ctx: ThreadContext) -> Sequence[AgentTool]:
         peer = coord.get_handle(ThreadId(thread_id))
 
         if mode == "wait":
+            # A blocking wait enqueues a cycle behind the peer's single serial
+            # dispatcher and suspends this cycle until it drains. That is only a
+            # true deadlock when the peer is (directly or transitively) already
+            # waiting back on us: then neither dispatcher can drain the other.
+            # Waiting on a merely-busy peer that is *not* waiting on us is safe —
+            # it finishes its work, then runs our enqueued cycle. So we refuse
+            # only when committing to this wait would close a cycle in the
+            # waits-for graph. See ``_would_close_wait_cycle`` above.
+            coord_key = id(coord)
+            if _would_close_wait_cycle(coord_key, self_id, thread_id):
+                return (
+                    f"error: thread {thread_id} is already waiting on this thread; "
+                    "send_message(mode='wait') would deadlock. Use "
+                    "mode='fire_and_forget' or mode='continue_then_receive' instead."
+                )
+            # Register our outstanding edge before awaiting, with no intervening
+            # ``await`` — so a peer that tries to wait back on us observes it and
+            # refuses (breaking the cycle on exactly one side).
+            _wait_edges.setdefault(coord_key, {})[self_id] = thread_id
             try:
                 result = await peer.run(message)
             except Exception as exc:
                 return f"error: {exc}"
+            finally:
+                _release_wait_edge(coord_key, self_id)
             return str(result)
 
         if mode == "fire_and_forget":

@@ -16,3 +16,7 @@ site/
 
 # example output
 examples/*.html
+examples/data/
+examples/*.egg-info/
+examples/multiagent_report.md
+examples/stock_report.html

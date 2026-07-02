@@ -1,4 +1,4 @@
-"""Integration test for ``examples/07_session_resume.py``.
+"""Integration test for ``examples/08_session_resume.py``.
 
 Exercises the two-thread save/resume flow end to end against deterministic
 ``ScriptedModel`` s (no real model calls): a fresh "process" runs one turn
@@ -22,9 +22,9 @@ from ai_functions.types import EventKind
 
 
 def _load_example() -> object:
-    """Import ``examples/07_session_resume.py`` as a module."""
-    path = Path(__file__).resolve().parent.parent / "examples" / "07_session_resume.py"
-    spec = importlib.util.spec_from_file_location("_example_07_session_resume", path)
+    """Import ``examples/08_session_resume.py`` as a module."""
+    path = Path(__file__).resolve().parent.parent / "examples" / "08_session_resume.py"
+    spec = importlib.util.spec_from_file_location("_example_08_session_resume", path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)

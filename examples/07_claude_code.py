@@ -70,9 +70,7 @@ def log_event(event: Event) -> None:
             error = "[error] " if status == "error" else ""
             print(f"    ⚙ tool result: {error}{preview}")
         case TokenUsageEvent(token_usage=usage):
-            total_input = (
-                usage.input_tokens + usage.cache_read_tokens + usage.cache_write_tokens
-            )
+            total_input = usage.input_tokens + usage.cache_read_tokens + usage.cache_write_tokens
             total = total_input + usage.output_tokens
             print(
                 f"  Σ tokens: in={usage.input_tokens} "

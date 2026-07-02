@@ -81,7 +81,7 @@ class AIThread[**P, T](Thread[P, T]):
             ``agent_kwargs["conversation_manager"]`` to a non-``None``
             value (the runtime owns conversation history; a user-supplied
             manager would desynchronize ``agent.messages`` from the
-            event log and break I7/I9).
+            event log).
 
     Implements:
         Thread.
@@ -121,7 +121,7 @@ class AIThread[**P, T](Thread[P, T]):
         :meth:`notify`); the event-bridge hook atomically emits one
         ``MESSAGE_USER`` event per buffer entry and injects the matching
         user turn into the live Strands agent at the first
-        ``BeforeModelCallEvent`` boundary (I7).
+        ``BeforeModelCallEvent`` boundary.
 
         Args:
             ctx: Freshly built per-cycle context.
@@ -174,7 +174,7 @@ class AIThread[**P, T](Thread[P, T]):
             7. Emit ``TOKEN_USAGE`` via ``ctx.on_event``.
             8. Run post-conditions via ``self._validate_result``; on
                failure, put the error text on ``ctx.message_queue`` (the
-               hook emits ``MESSAGE_USER`` on the next drain — I7) and
+               hook emits ``MESSAGE_USER`` on the next drain) and
                retry from step 2 up to ``cycle_config.max_attempts``
                times.
             9. Return the typed and validated result.
@@ -217,7 +217,7 @@ class AIThread[**P, T](Thread[P, T]):
         """
         ...
 
-    def _generate_prompt(self, *args: P.args, **kwargs: P.kwargs) -> str:
+    async def _generate_prompt(self, *args: P.args, **kwargs: P.kwargs) -> str:
         """Render the prompt string from template arguments.
 
         Args:
@@ -232,7 +232,8 @@ class AIThread[**P, T](Thread[P, T]):
                 function has no docstring.
 
         Strategy:
-            1. Call ``self._template.prompt_fn(*args, **kwargs)``.
+            1. Call ``self._template.prompt_fn(*args, **kwargs)``; await it if
+               it is a coroutine (``async def`` prompt bodies are supported).
             2. If ``prompt_fn`` returns ``None``, interpret
                ``prompt_fn.__doc__`` as a ``tstr`` template and
                interpolate it using the function arguments and their

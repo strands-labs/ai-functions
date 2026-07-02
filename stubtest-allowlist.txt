@@ -12,6 +12,8 @@ ai_functions.network.wire.Binary
 ai_functions.network.wire.Frame
 ai_functions.types.events.SystemEvent
 ai_functions.types.policy.Policy
+ai_functions.memory.frozen.Frozen
+ai_functions.memory.procedural.Procedural
 
 # NewType creates functions at runtime; stubs declare them as classes (TypeInfo)
 ai_functions.types.ids.EventId
@@ -34,3 +36,16 @@ ai_functions.network.endpoint.CoordinatorHandlers.*
 # documents the RPC surface in channel.pyi / client.pyi / endpoint.pyi
 # rather than duplicating every params model in a stub file.
 ai_functions.network.wire_methods
+
+# Optimizer internals: rendering helpers, the backward AI function's
+# gradient-feedback pydantic models, and the module logger are
+# implementation details below the public surface (build_graph +
+# TextGradOptimizer). The spec documents only the public API.
+ai_functions.optimizer.rendering
+ai_functions.optimizer.textgrad.Feedback
+ai_functions.optimizer.textgrad.Feedbacks
+ai_functions.optimizer.textgrad.logger
+
+# Memory backend module loggers are internal implementation detail.
+ai_functions.memory.agentcore_backend.logger
+ai_functions.memory.base.logger

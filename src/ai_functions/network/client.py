@@ -591,17 +591,17 @@ class CoordinatorClient(Coordinator):
     # ── Events ──────────────────────────────────────────────────────────────
 
     def append_event(self, event: Event) -> None:
-        """Not supported on the client side.
+        """Schedule ``event`` to be appended on the endpoint's coordinator.
 
-        Events originate at the endpoint's inner coordinator and are
-        broadcast to clients via :meth:`on`; clients cannot inject
-        events into the shared log.
+        Synchronous by design (I2/I3): it schedules a fire-and-forget
+        ``coordinator.append_event`` RPC and returns immediately without
+        blocking on network I/O. The remote coordinator performs the durable
+        append and subscriber broadcast; subscribers on this client observe it
+        later via :meth:`on`. Per I11, a failure of the scheduled RPC is logged
+        and swallowed rather than propagated to the (often sync) caller.
 
         Args:
-            event: Ignored.
-
-        Raises:
-            NotImplementedError: Always.
+            event: The event to append; ``event.thread_id`` must be set.
         """
         params = AppendEventParams(event=event)
 
