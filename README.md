@@ -1,13 +1,13 @@
 # Strands AI Functions
 
-Strands AI Functions is a Python library built around a new abstraction: functions that behave like standard Python functions, but are evaluated by AI agents.
+Strands AI Functions is a Python library built around a new abstraction: functions that behave like standard Python functions, but are evaluated by AI agents. The library develops this idea from a single verified call up to distributed teams of agents that improve run over run:
 
-- **Verified, not prompted**: declare *post-conditions* on a function; the library runs a self-correcting loop until the output satisfies them, preventing cascading errors in complex workflows.
-- **Native Python objects**: agents can dynamically generate and execute code, so an AI Function can take and return real Python values (a `DataFrame`, not a JSON blob).
-- **Just functions**: compose them with `await` and `asyncio.gather`, pass them to other agents as tools, and share them as ordinary Python libraries.
-- **Stateful threads and teams**: spawn a function into a live **AI Thread** that keeps its history; run several threads on a coordinator and let them discover and message each other.
-- **Distributed by a one-line change**: swap the in-process coordinator for a client, and the same code runs across processes and machines, drivable from a CLI.
-- **Memory and optimization**: backpropagation-style natural-language feedback updates the prompts, facts, and code your workflow relies on, so it improves run over run.
+- **[Don't prompt-and-pray](#post-conditions)**: declare *post-conditions* on a function and the library runs a self-correcting loop until the output satisfies them, preventing cascading errors in complex workflows.
+- **[Native Python objects](#native-python-objects)**: agents can dynamically generate and execute code, so an AI Function can take and return real Python values (a `DataFrame`, not a JSON blob).
+- **[Just functions](#composing-functions)**: run them in parallel with `asyncio.gather`, pass them to other agents as tools, and share them as ordinary Python libraries.
+- **[Stateful threads and teams](#stateful-ai-threads)**: spawn a function into a live **AI Thread** that keeps its history; run several threads on a coordinator and let them discover and message each other.
+- **[Distributed by a one-line change](#distributed-operation)**: swap the in-process coordinator for a client, and the same code runs across processes and machines.
+- **[Memory and optimization](#memory--optimization)**: backpropagation-style natural-language feedback updates the prompts, facts, and code your workflow relies on, so it continuously improves.
 
 ## Getting Started
 
@@ -53,7 +53,7 @@ That's the whole thing: the library creates an agent, builds the prompt, runs it
 
 ## Post-Conditions
 
-Programmers should not "prompt-and-pray" for an agent's result to be correct, they should *verify* it. Post-conditions are functions (plain Python or other AI Functions) that validate the result; if any fail, the model is automatically re-prompted with the errors and tries again, up to `max_attempts` times. The function only returns once every post-condition passes.
+Programmers should not "prompt-and-pray" for an agent's result to be correct – they should *verify* it. Post-conditions are functions (plain Python or other AI Functions) that validate the result; if any fail, the model is automatically re-prompted with the errors and tries again, up to `max_attempts` times. The function only returns once every post-condition passes.
 
 ```python
 from pydantic import BaseModel
@@ -274,7 +274,7 @@ coord = await CoordinatorClient.connect("ws://coordinator.internal:9901/rpc")
 
 `coord.spawn`, `handle.run`, `send_message`, and event subscriptions all work identically. Threads hosted on different clients are full peers: a thread that closes over local state (a database connection, an in-memory model) keeps running in the process that owns that state, while remaining reachable by every other thread through the shared coordinator. See the [tutorial](docs/tutorial.md#distributed-operation) for a worked example.
 
-## Agents Across Processes, from the CLI
+### From the CLI
 
 The `ai-functions` CLI turns the coordinator into a machine-wide runtime: agent scripts started in separate terminals register with it, become discoverable by each other, and can be driven from the shell:
 
@@ -323,14 +323,18 @@ summary = await summarize.trace(
 
 # Propagate natural-language feedback backward through the computation graph
 # and commit the updated parameters. The next run recalls the improved values.
-await optimizer.step(summary, "The summary should be more concise and use bullet points.", backends=[memory])
+await optimizer.step(
+    summary,
+    "The summary should be more concise and use bullet points.",
+    backends=[memory]
+)
 ```
 
 *Procedural* parameters extend the same mechanism to code: the optimizer can store the Python an agent wrote to solve a task, so later runs reuse a proven implementation instead of regenerating it, a form of JIT compilation for agentic logic. Backends and optimizers are pluggable, and memory can also be exposed to agents as tools. See the [tutorial](docs/tutorial.md#memory-and-optimization) for the full workflow, `examples/memory_optimization.py` for a multi-agent example, and `examples/memory_backprop_scipy.py` for a complete learning loop on a code-generation benchmark.
 
 ## Security
 
-Code execution is off by default. The `"local"` mode validates generated code with AST checks, restricts imports to the allowlist you pass in, and applies timeouts. But it is not a sandbox: it cannot stop resource exhaustion (an infinite loop, runaway memory allocation) and offers no process-level isolation. For production deployments, run AI Functions inside a container or other isolated environment to provide additional protection against resource exhaustion and process-level isolation. Use `"disabled"` mode for untrusted input or restricted environments. Limit imports to necessary packages and monitor execution in production.
+Code execution is off by default. The `"local"` mode validates generated code with AST checks, restricts imports to the allowlist you pass in, and applies timeouts. But it is not a sandbox: it cannot stop resource exhaustion (an infinite loop, runaway memory allocation) and offers no process-level isolation. For production, run AI Functions inside a container or other isolated environment, which adds the process isolation and resource limits that `"local"` mode cannot provide. For untrusted input, use `"disabled"` mode.
 
 ## Examples
 
