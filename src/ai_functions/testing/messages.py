@@ -1,9 +1,10 @@
 """Message-history comparison utilities for harness-based tests.
 
 Used to compare ``agent.messages`` against ``reconstruct_messages(events)``. The
-normalizer strips only the ``metadata`` key that Strands attaches to assistant
-messages as post-hoc telemetry — no other shape changes — so tests that fail indicate
-genuine divergence between the live agent history and the event-log reconstruction.
+normalizer strips the per-message telemetry keys Strands attaches to live messages
+(``metadata`` and ``tracking_id``) — no other shape changes — so tests that fail
+indicate genuine divergence between the live agent history and the event-log
+reconstruction.
 """
 
 from __future__ import annotations
@@ -14,37 +15,46 @@ import json
 
 from strands.types.content import Message, Messages
 
+# Per-message keys Strands populates as telemetry on the live ``agent.messages``.
+# Both are assigned by the agent automatically and stripped before model calls, so
+# they are not part of the conversation the model observes on replay and must be
+# removed before comparing against ``reconstruct_messages`` output:
+#   - ``metadata``: usage/metrics attached after ``AfterModelCallEvent``.
+#   - ``tracking_id``: durable per-message UUID added in strands-agents 1.47
+#     (see ``strands.types.content.Message`` / ``_ensure_tracking_id``).
+_TELEMETRY_KEYS = ("metadata", "tracking_id")
+
 
 def normalize_messages(messages: Messages) -> Messages:
     """Return a canonical form suitable for equality comparison.
 
-    The only normalization applied is stripping the ``metadata`` key that Strands
-    attaches to assistant messages in ``event_loop.event_loop``
-    (``message["metadata"] = {"usage": ..., "metrics": ...}``). That field is post-hoc
-    telemetry: populated after ``AfterModelCallEvent``, not part of the conversation
-    the model observes on replay, and discarded by Strands' own
-    ``_normalize_messages`` before the next model call.
+    The only normalization applied is stripping the per-message telemetry keys
+    Strands attaches to the live ``agent.messages`` — ``metadata`` (usage/metrics,
+    set after ``AfterModelCallEvent``) and ``tracking_id`` (a durable per-message
+    UUID added in strands-agents 1.47). Both are populated by the agent automatically
+    and discarded before the next model call, so neither is part of the conversation
+    the model observes on replay.
 
     No other normalization is applied. In particular, consecutive same-role messages
     are NOT merged — Strands does not merge them either. The round-trip property
     ``agent.messages == reconstruct_messages(events)`` is exactly that: equality
-    after stripping ``metadata``.
+    after stripping the telemetry keys.
 
     Args:
         messages: A Strands-format message list.
 
     Returns:
-        A deep copy with ``metadata`` keys removed from every message.
+        A deep copy with the telemetry keys removed from every message.
 
     Ensures:
         The returned list is a deep copy; callers may mutate freely.
     """
     result: list[Message] = []
     for msg in copy.deepcopy(list(messages)):
-        # ``metadata`` is not part of the ``Message`` TypedDict; Strands
-        # stashes it here at runtime anyway. Strip it to compare only what
-        # the model actually sees.
-        msg.pop("metadata", None)  # type: ignore[misc]
+        # These keys are runtime telemetry Strands stashes on each message; strip
+        # them so we compare only what the model actually sees on replay.
+        for key in _TELEMETRY_KEYS:
+            msg.pop(key, None)  # type: ignore[misc]
         result.append(msg)
     return result
 
