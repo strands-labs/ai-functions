@@ -1,8 +1,7 @@
 """SkillsBench improvement loop — self-improving agent via textual gradients.
 
-Runs the same five SkillsBench tasks with ten skills (four correct + six
-distractors) used in the HelixThreads experiment, rewired to the ai-functions
-native API:
+Runs five SkillsBench tasks with ten skills available (four relevant + six
+distractors), built on the ai-functions native API:
 
 - ``JSONMemoryBackend``   replaces the old plain-markdown AgentMemory
 - ``TextGradOptimizer``   replaces the custom TextGrad wrapper
@@ -33,15 +32,7 @@ The mental model is PyTorch autograd:
 - ``backward()``    ≈ ``loss.backward()`` — accumulates textual gradients
 - ``consolidate()`` ≈ ``optimizer.step()`` — writes improvements to memory
 
-Setup::
-
-    pip install strands-ai-functions[claude-code]
-
-Usage::
-
-    python -u examples/memory_improvement_loop.py \\
-        --skillsbench /path/to/skillsbench \\
-        --output-dir /tmp/aifunc-improvement-demo
+Setup and usage: see README.md in this directory.
 """
 
 from __future__ import annotations
@@ -50,10 +41,13 @@ import argparse
 import asyncio
 from pathlib import Path
 
-from _skillsbench import OracleResult, SkillsBenchSource, TaskSpec
-from _utils import display, rule
 from claude_agent_sdk import ClaudeAgentOptions
 from pydantic import BaseModel, Field
+from rich.console import Console
+from rich.panel import Panel
+from rich.rule import Rule
+from rich.syntax import Syntax
+from task_source import OracleResult, SkillsBenchSource, TaskSpec
 
 from ai_functions import (
     InMemoryCoordinator,
@@ -68,7 +62,25 @@ from ai_functions.types.graph import ParameterNode, ThreadNode
 _OPT_MODEL = "us.anthropic.claude-sonnet-4-6"
 
 # ---------------------------------------------------------------------------
-# Task and skill configuration  (same as 09_improvement_loop.py)
+# Display helpers (same look as the top-level examples' _utils.py)
+# ---------------------------------------------------------------------------
+
+_console = Console()
+
+
+def display(title: str, content: str, lang: str = "markdown") -> None:
+    """Render ``content`` in a titled panel with syntax highlighting."""
+    body = Syntax(content, lang, theme="monokai", word_wrap=True)
+    _console.print(Panel(body, title=title, border_style="cyan", expand=True))
+
+
+def rule(title: str) -> None:
+    """Print a horizontal divider to mark a step."""
+    _console.print(Rule(title, style="cyan"))
+
+
+# ---------------------------------------------------------------------------
+# Task and skill configuration
 # ---------------------------------------------------------------------------
 
 _TARGET_TASKS: dict[str, list[str]] = {
@@ -178,12 +190,8 @@ async def _run_round(
     )
 
     results: list[tuple[TaskSpec, OracleResult, ThreadNode]] = []
-    for task, res in zip(tasks, raw):
-        oracle = (
-            OracleResult(passed=False, score=0.0, feedback=repr(res))
-            if isinstance(res, Exception)
-            else res
-        )
+    for task, res in zip(tasks, raw, strict=True):
+        oracle = OracleResult(passed=False, score=0.0, feedback=repr(res)) if isinstance(res, Exception) else res
         # Build a synthetic computation graph node for this task.
         # The ParameterNode wraps the shared JSONMemoryBackend so the optimizer
         # can accumulate gradients and consolidate them in one pass at the end.
@@ -349,7 +357,7 @@ async def main(skillsbench: Path, output_dir: Path) -> None:
     rule("Round-over-round comparison")
     header = f"{'Task':<35} {'Round 0':>10} {'Round 1':>10}  Change"
     lines = [header, "-" * len(header)]
-    for (task, o0, _), (_, o1, _) in zip(round_0, round_1):
+    for (task, o0, _), (_, o1, _) in zip(round_0, round_1, strict=True):
         r0 = f"{o0.score:.2f}" + (" ✓" if o0.passed else " ✗")
         r1 = f"{o1.score:.2f}" + (" ✓" if o1.passed else " ✗")
         if not o0.passed and o1.passed:

@@ -1,7 +1,8 @@
 """SkillsBenchSource — TaskSource adapter for SkillsBench directories.
 
-Self-contained copy of the HelixThreads SkillsBenchSource, adapted to remove
-the HelixThreads package dependency. Used by memory_improvement_loop.py.
+Loads tasks from a SkillsBench checkout, sandboxes their input/output files,
+and grades agent runs with each task's pytest oracle. Used by
+memory_improvement_loop.py.
 """
 
 from __future__ import annotations
@@ -18,7 +19,6 @@ import tomllib
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-
 
 # ---------------------------------------------------------------------------
 # Shared types

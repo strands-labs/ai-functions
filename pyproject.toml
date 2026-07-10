@@ -153,4 +153,4 @@ init_forbid_extra = true
 init_typed = true
 
 [tool.uv.workspace]
-members = ["examples"]
+members = ["examples", "examples/skillsbench"]

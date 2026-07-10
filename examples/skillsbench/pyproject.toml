@@ -1,0 +1,31 @@
+[project]
+name = "ai-functions-skillsbench-example"
+version = "0.1.0"
+description = "Skill-evaluation-based agentic improvement loop on SkillsBench tasks"
+requires-python = ">=3.12"
+dependencies = [
+    "strands-ai-functions[claude-code]",
+    "rich>=13.7",
+    "pydantic>=2.4.0,<3.0.0",
+    # Oracle: each task is graded by running its pytest suite, which imports
+    # these packages (exceltable-in-ppt: openpyxl/pandas; offer-letter-generator:
+    # python-docx; pptx-reference-formatting: rapidfuzz).
+    "pytest>=8.0",
+    "openpyxl>=3.1",
+    "pandas>=2.0",
+    "python-docx>=1.1",
+    "rapidfuzz>=3.0",
+    # Agent runtime: the skills instruct the agent to run Python scripts that
+    # use these packages, so they must be importable in the agent's environment.
+    "python-pptx>=1.0",
+    "pypdf>=5.0",
+]
+
+# SkillsBench itself is a data dependency, not a Python package dependency:
+# the example reads tasks/<task-id>/ directories from a local checkout of
+# https://github.com/benchflow-ai/skillsbench passed via --skillsbench.
+# The court-form-filling oracle additionally shells out to `pdftotext`
+# (poppler-utils). See README.md for setup.
+
+[tool.uv.sources]
+strands-ai-functions = { workspace = true }
