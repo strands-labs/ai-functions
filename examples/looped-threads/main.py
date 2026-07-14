@@ -135,25 +135,44 @@ def _run_and_log(model_path: Path) -> subprocess.CompletedProcess[str]:
 
 
 # ── The thread's file tools (run_python doubles as the experiment recorder) ──
+# The tools are confined to the lab directory: a path that resolves outside LAB
+# (e.g. via ``..`` or an absolute path elsewhere) is refused, so the thread can
+# only read, write, and run files within its own working directory.
+
+
+def _resolve_in_lab(path: str) -> Path | None:
+    """Resolve `path` and return it only if it stays inside LAB, else None."""
+    resolved = Path(path).resolve()
+    lab = LAB.resolve()
+    return resolved if (resolved == lab or resolved.is_relative_to(lab)) else None
 
 
 @tool
 def read_file(path: str) -> str:
-    """Read and return the full text of the file at `path`."""
-    return Path(path).read_text()
+    """Read and return the full text of the file at `path` (must be inside the lab)."""
+    target = _resolve_in_lab(path)
+    if target is None:
+        return f"refused: {path} is outside the working directory {LAB}"
+    return target.read_text()
 
 
 @tool
 def write_file(path: str, content: str) -> str:
-    """Overwrite the file at `path` with `content` and confirm the byte count."""
-    Path(path).write_text(content)
+    """Overwrite the file at `path` (must be inside the lab) and confirm the byte count."""
+    target = _resolve_in_lab(path)
+    if target is None:
+        return f"refused: {path} is outside the working directory {LAB}"
+    target.write_text(content)
     return f"wrote {len(content)} bytes to {path}"
 
 
 @tool
 def run_python(path: str) -> str:
-    """Run the Python script at `path` and return its combined stdout and stderr."""
-    proc = _run_and_log(Path(path))
+    """Run the Python script at `path` (must be inside the lab); return its stdout/stderr."""
+    target = _resolve_in_lab(path)
+    if target is None:
+        return f"refused: {path} is outside the working directory {LAB}"
+    proc = _run_and_log(target)
     return f"exit={proc.returncode}\n{proc.stdout}\n{proc.stderr}"
 
 

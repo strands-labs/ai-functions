@@ -60,7 +60,7 @@ cached locally, so the thread's many re-runs are fast and offline.
 (`scikit-learn`, `matplotlib`, `pandas`, plus the base `strands-ai-functions`),
 so this example's requirements are self-contained.
 
-## Output
+## Output (generated locally, gitignored)
 
 - A learning-curve figure, `house_prices_search.png`, showing the best validation
   RMSE stepping down as the search improves, each step annotated with the model
@@ -69,8 +69,5 @@ so this example's requirements are self-contained.
   (the thread's edits — the accumulated `MODELS` catalog), `notes.md` (the lab
   notebook), and `experiments.csv`.
 
-The `.lab/` and `house_prices_search.png` checked in here are a **sample from one
-run**. You do **not** need to clear anything before running: `_seed_lab()` in
-`main.py` **automatically wipes and re-seeds `.lab/` at the start of every run**,
-so each run starts fresh from the seed — and re-running the example will overwrite
-this sample with your own results.
+`_seed_lab()` in `main.py` **automatically wipes and re-seeds `.lab/` at the start
+of every run**, so each run starts fresh from the seed — no manual cleanup needed.
