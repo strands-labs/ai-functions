@@ -62,6 +62,9 @@ runtime-tools = [
     "mcp>=1.29",
     "uvicorn>=0.30",
 ]
+codex = [
+    "openai-codex>=0.144.4",
+]
 
 [project.scripts]
 ai-functions = "ai_functions.cli:main"
@@ -96,6 +99,7 @@ dependencies = [
     "agent-client-protocol>=0.12.1,<0.13",
     "mcp>=1.29",
     "uvicorn>=0.30",
+    "openai-codex>=0.144.4",
     "pyyaml>=6.0",
     "bedrock-agentcore>=1.6.0",
     "rank-bm25>=0.2.2",
@@ -120,6 +124,9 @@ testpaths = ["tests"]
 pythonpath = ["examples"]
 python_files = ["test_*.py", "*_test.py"]
 asyncio_mode = "auto"
+markers = [
+    "integration: runs a real agent runtime binary (hermetic; model layer mocked)",
+]
 filterwarnings = [
     "ignore:websockets\\.legacy is deprecated:DeprecationWarning:websockets.legacy",
 ]
