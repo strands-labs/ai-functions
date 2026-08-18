@@ -37,6 +37,11 @@ ai_functions.memory.procedural.Procedural.*
 # declares it identically, but stubtest cannot represent a TypeAliasType as a Union and flags it.
 ai_functions.types.graph.Traceable
 
+# ``SendMessageMode = Literal["wait", "fire_and_forget", "continue_then_receive"]``. The stub
+# declares the identical Literal, but stubtest resolves the runtime alias to a callable
+# special form and reports it as "not a Union".
+ai_functions.runtime.coordinator_tools_core.SendMessageMode
+
 # NewType creates functions at runtime; stubs declare them as classes (TypeInfo)
 ai_functions.types.ids.EventId
 ai_functions.types.ids.MessageId

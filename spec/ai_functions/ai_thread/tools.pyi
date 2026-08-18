@@ -6,26 +6,12 @@ The default ``config_hook`` installed on every ``AIFunction`` calls
 :func:`coordinator_tools` with the cycle's ``ctx`` and appends the
 result to ``cycle_config.tools``.
 
-Two tools are exposed:
-
-- ``list_threads()`` — return a JSON-friendly snapshot of every thread
-  registered with the calling agent's coordinator, including a
-  ``is_self`` flag marking the calling thread.
-- ``send_message(thread_id, message, mode="wait")`` — invoke a peer
-  thread via its typed ``run(message)`` entry point. The peer must have
-  ``input_shape == STR_PROMPT``. ``mode`` selects how the sender relates
-  to the peer's result:
-
-  - ``"wait"`` (default): await the peer's cycle; return its reply as
-    the tool's result. Blocks the sender's cycle on the peer's cycle.
-  - ``"fire_and_forget"``: schedule the peer's cycle as a background
-    task; return immediately. The peer's reply is discarded.
-  - ``"continue_then_receive"``: schedule the peer's cycle, return
-    immediately, and when the peer completes, enqueue a fresh cycle on
-    the sender with the peer's reply formatted as the user turn. This
-    mode requires the sender itself to have ``input_shape == STR_PROMPT``
-    — the tool returns an error otherwise, asking the agent to use
-    ``"wait"``.
+Two tools are exposed, ``list_threads()`` and
+``send_message(thread_id, message, mode="wait")``. Their semantics, wire
+descriptions, and argument schema live in
+:mod:`ai_functions.runtime.coordinator_tools_core` so that every runtime adapter
+offers the identical tool; this module is the Strands binding for them, and
+Strands derives each schema from the wrapper's signature.
 
 These tools are LLM-facing. Application code that wants the old
 inject-then-no-cycle semantics should call

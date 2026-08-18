@@ -400,7 +400,13 @@ async def test_send_message_to_self_returns_error() -> None:
 
 
 async def test_send_message_unknown_mode_returns_error() -> None:
-    """An unrecognised mode returns an error ack without invoking the peer."""
+    """An unrecognised mode returns an error ack without invoking the peer.
+
+    ``mode`` is an enum in the tool schema, so the rejection comes from the
+    transport's schema validation and names the legal values. The body's own
+    guard still exists for callers that reach it unvalidated; that path is
+    covered directly in ``test_coordinator_tools_core.py``.
+    """
     async with RuntimeHarness() as h:
         bob = await h.spawn(
             _chat.replace(model=ScriptedModel([Turn(text="never runs")])),
@@ -424,8 +430,10 @@ async def test_send_message_unknown_mode_returns_error() -> None:
         await alice.run("bad mode")
         tool_results = [e for e in await h.events(alice.id) if e.kind == EventKind.TOOL_RESULT]
         ack = _tool_result_text(tool_results[0])
-        assert ack.startswith("error:")
-        assert "unknown mode" in ack
+        assert "error" in ack.lower(), f"expected an error ack, got: {ack!r}"
+        # The rejection tells the agent which values are legal.
+        for mode in ("wait", "fire_and_forget", "continue_then_receive"):
+            assert mode in ack, f"expected {mode!r} named in the rejection: {ack!r}"
         # Bob's cycle must not have been triggered.
         bob_completes = [e for e in await h.events(bob.id) if e.kind == EventKind.COMPLETED]
         assert len(bob_completes) == 0
