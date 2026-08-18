@@ -10,6 +10,7 @@ reaches it with an unvalidated argument.
 import importlib
 
 import pytest
+from pydantic import ValidationError
 from strands.tools.decorator import tool as strands_tool
 
 from ai_functions.runtime.coordinator_tools_core import (
@@ -174,6 +175,22 @@ async def test_send_message_unknown_mode_names_the_legal_modes() -> None:
     assert result.startswith("error: unknown mode")
     for mode in SEND_MESSAGE_MODES:
         assert mode in result
+
+
+def test_thread_summary_is_frozen_like_thread_info() -> None:
+    """The result models are immutable snapshots, matching ``ThreadInfo``."""
+    summary = ThreadSummary(
+        thread_id="t-1",
+        thread_name="alice",
+        status="idle",
+        input_shape="str_prompt",
+        parent_id=None,
+        is_self=True,
+    )
+    with pytest.raises(ValidationError):
+        summary.thread_name = "renamed"  # pyright: ignore[reportAttributeAccessIssue]
+    with pytest.raises(ValidationError):
+        ListThreadsResult(threads=[summary]).threads = []  # pyright: ignore[reportAttributeAccessIssue]
 
 
 def test_thread_summary_round_trips_as_json() -> None:

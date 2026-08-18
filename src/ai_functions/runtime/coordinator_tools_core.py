@@ -25,7 +25,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any, Literal, get_args
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from ..protocols import Coordinator
 from ..types import InputShape, ThreadId
@@ -36,7 +36,6 @@ __all__ = [
     "SEND_MESSAGE_DESCRIPTION",
     "SEND_MESSAGE_INPUT_SCHEMA",
     "SEND_MESSAGE_MODES",
-    "ListThreadsArgs",
     "ListThreadsResult",
     "SendMessageArgs",
     "SendMessageMode",
@@ -56,29 +55,55 @@ SEND_MESSAGE_MODES: tuple[str, ...] = get_args(SendMessageMode)
 
 
 class ThreadSummary(BaseModel):
-    """One entry of :class:`ListThreadsResult`; a JSON-friendly ``ThreadInfo``."""
+    """One entry of :class:`ListThreadsResult`; an agent-facing ``ThreadInfo``.
+
+    Every field is widened to ``str`` because this crosses a tool boundary to a
+    language model: :class:`~ai_functions.types.ThreadInfo` carries ``ThreadId``
+    newtypes and ``StrEnum`` members, and a model reading the tool result has no
+    use for that distinction. Frozen, like ``ThreadInfo``, so it round-trips over
+    the wire via ``model_dump_json`` / ``model_validate_json``.
+    """
+
+    model_config = ConfigDict(frozen=True)
 
     thread_id: str
+    """Runtime-assigned id of this thread; the value to pass to ``send_message``."""
+
     thread_name: str | None
+    """Human-readable name supplied at spawn time (may be ``None``)."""
+
     status: str
+    """Lifecycle status of this thread at snapshot time."""
+
     input_shape: str
+    """Coarse shape of the thread's ``execute`` input signature. Only
+    ``"str_prompt"`` threads can receive ``send_message``."""
+
     parent_id: str | None
+    """Id of the parent thread, if this thread was spawned with one."""
+
     is_self: bool
     """True for the thread whose agent is calling the tool."""
 
 
 class ListThreadsResult(BaseModel):
-    """Return shape of :func:`list_threads`."""
+    """Return shape of :func:`list_threads`. Frozen; serialises via ``model_dump_json``."""
+
+    model_config = ConfigDict(frozen=True)
 
     threads: list[ThreadSummary]
-
-
-class ListThreadsArgs(BaseModel):
-    """Arguments of :func:`list_threads` — there are none."""
+    """One entry per thread registered with the coordinator, order coordinator-defined."""
 
 
 class SendMessageArgs(BaseModel):
-    """Arguments of :func:`send_message`; the sole declaration of its schema."""
+    """Arguments of :func:`send_message`; the sole declaration of its schema.
+
+    Exists to be rendered as a schema rather than to be instantiated: adapters
+    whose SDK wants a JSON Schema get :data:`SEND_MESSAGE_INPUT_SCHEMA` from it,
+    and adapters that infer from a signature declare the same three parameters.
+    """
+
+    model_config = ConfigDict(frozen=True)
 
     thread_id: str = Field(description="Id of the peer thread to send to.")
     message: str = Field(description="Message body delivered as the peer's user turn.")
@@ -132,8 +157,12 @@ def _tool_input_schema(model: type[BaseModel]) -> dict[str, Any]:  # pyright: ig
     return schema
 
 
-LIST_THREADS_INPUT_SCHEMA: dict[str, Any] = _tool_input_schema(ListThreadsArgs)  # pyright: ignore[reportExplicitAny]
-"""JSON Schema for ``list_threads``, for adapters whose SDK takes one directly."""
+LIST_THREADS_INPUT_SCHEMA: dict[str, Any] = {"type": "object", "properties": {}}  # pyright: ignore[reportExplicitAny]
+"""JSON Schema for ``list_threads``, for adapters whose SDK takes one directly.
+
+Written out rather than derived from a model: the tool takes no arguments, so
+there is nothing for a second declaration to drift from.
+"""
 
 SEND_MESSAGE_INPUT_SCHEMA: dict[str, Any] = _tool_input_schema(SendMessageArgs)  # pyright: ignore[reportExplicitAny]
 """JSON Schema for ``send_message``, for adapters whose SDK takes one directly.
