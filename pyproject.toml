@@ -58,6 +58,10 @@ kiro = [
 agentcore = [
     "bedrock-agentcore>=1.6.0",
 ]
+runtime-tools = [
+    "mcp>=1.29",
+    "uvicorn>=0.30",
+]
 
 [project.scripts]
 ai-functions = "ai_functions.cli:main"
@@ -90,6 +94,8 @@ dependencies = [
     "textual>=0.70",
     "platformdirs>=4.0",
     "agent-client-protocol>=0.12.1,<0.13",
+    "mcp>=1.29",
+    "uvicorn>=0.30",
     "pyyaml>=6.0",
     "bedrock-agentcore>=1.6.0",
     "rank-bm25>=0.2.2",
