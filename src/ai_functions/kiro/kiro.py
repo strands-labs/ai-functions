@@ -63,8 +63,7 @@ from strands.types.content import ContentBlock
 from strands.types.interrupt import InterruptResponseContent
 from strands.types.tools import AgentTool, ToolResultContent, ToolResultStatus
 
-from ..ai_thread.errors import AIFunctionError
-from ..ai_thread.postcondition import PostCondition
+from ..ai_thread.postcondition import PostCondition, run_post_condition_loop
 from ..protocols import Spawnable, Thread
 from ..types import (
     InputShape,
@@ -73,7 +72,6 @@ from ..types import (
     MessageAssistantThinkingEvent,
     MessageAssistantTokenEvent,
     MessageId,
-    MessageUserEvent,
     ThreadContext,
     TokenUsage,
     TokenUsageEvent,
@@ -433,46 +431,17 @@ class KiroAgentThread(Thread[[str], str]):
         try:
             await self._ensure_connected()
 
-            post_conditions = self._template.post_conditions
-            max_attempts = self._template.max_attempts if post_conditions else 1
+            async def _send_turn(combined: str) -> str:
+                return await self._run_turn(ctx, combined)
 
-            result = ""
-            for attempt in range(max(1, max_attempts)):
-                # Drain inject buffer: each pending message is emitted as its
-                # own MESSAGE_USER event, then prepended to the outgoing turn.
-                # On retries the buffer holds the post-condition failure
-                # feedback appended below; the original prompt is sent only on
-                # the first attempt — the ACP session owns history, so retries
-                # ride the feedback turn.
-                pending = list(self._inject_buffer)
-                self._inject_buffer.clear()
-
-                parts: list[str] = []
-                for injected in pending:
-                    ctx.on_event(MessageUserEvent(text=injected))
-                    parts.append(injected)
-                if attempt == 0:
-                    ctx.on_event(MessageUserEvent(text=prompt))
-                    parts.append(prompt)
-                combined = "\n\n".join(parts)
-
-                result = await self._run_turn(ctx, combined)
-
-                if not post_conditions:
-                    return result
-
-                errors = await self._validate_result(result, post_conditions)
-                if not errors:
-                    return result
-
-                failures = "\n".join(f"- {e}" for e in errors)
-                self._inject_buffer.append(
-                    f"[{self.name}] Post-condition failures (attempt {attempt + 1}/{max_attempts}):\n{failures}",
-                )
-
-            raise AIFunctionError(
-                f"Post-conditions not satisfied after {max_attempts} attempt(s)",
-                function_name=self.name,
+            return await run_post_condition_loop(
+                ctx,
+                prompt,
+                thread_name=self.name,
+                post_conditions=self._template.post_conditions,
+                max_attempts=self._template.max_attempts,
+                inject_buffer=self._inject_buffer,
+                send_turn=_send_turn,
             )
         finally:
             self._active_ctx = None
@@ -598,40 +567,6 @@ class KiroAgentThread(Thread[[str], str]):
         if usage is not None:
             ctx.on_event(TokenUsageEvent(token_usage=usage))
         return "".join(turn.text_parts)
-
-    async def _validate_result(
-        self,
-        result: str,
-        post_conditions: tuple[PostCondition, ...],
-    ) -> list[str]:
-        """Evaluate every post-condition against ``result`` in parallel.
-
-        A condition returning ``None``/``passed`` passes; ``passed=False``
-        contributes its message; a raised exception is treated as failure with
-        the exception text. ``KiroAgentThread`` takes a single string prompt, so
-        there are no bound keyword arguments to offer condition callables.
-
-        Args:
-            result: The candidate result string for the turn.
-            post_conditions: Validators to run.
-
-        Returns:
-            Failure messages; empty when all conditions pass.
-        """
-
-        async def _run_one(cond: PostCondition) -> str | None:
-            try:
-                cond_result = cond(result)
-                if asyncio.iscoroutine(cond_result):
-                    cond_result = await cond_result
-            except Exception as exc:  # noqa: BLE001 - any failure is a failed condition
-                return str(exc)
-            if cond_result is None or cond_result.passed:
-                return None
-            return cond_result.message
-
-        outcomes = await asyncio.gather(*(_run_one(c) for c in post_conditions))
-        return [msg for msg in outcomes if msg is not None]
 
     # ── ACP client callbacks (invoked from the connection's read loop) ──
 
