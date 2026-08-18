@@ -51,7 +51,7 @@ claude-code = [
     "claude-agent-sdk>=0.1.66",
 ]
 kiro = [
-    "agent-client-protocol==0.10.1",
+    "agent-client-protocol>=0.12.1,<0.13",
 ]
 agentcore = [
     "bedrock-agentcore>=1.6.0",
@@ -87,7 +87,7 @@ dependencies = [
     "rich>=13.7",
     "textual>=0.70",
     "platformdirs>=4.0",
-    "agent-client-protocol==0.10.1",
+    "agent-client-protocol>=0.12.1,<0.13",
     "pyyaml>=6.0",
     "bedrock-agentcore>=1.6.0",
     "rank-bm25>=0.2.2",

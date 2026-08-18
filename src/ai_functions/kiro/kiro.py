@@ -87,7 +87,6 @@ try:
         Client as _AcpClient,
     )
     from acp import (
-        ClientSideConnection,
         RequestPermissionResponse,
     )
     from acp.schema import (
@@ -109,6 +108,10 @@ except ImportError as exc:  # pragma: no cover - exercised only without the extr
     ) from exc
 
 if TYPE_CHECKING:
+    # Annotation-only: ``ClientSideConnection`` is deprecated for direct runtime
+    # use (``acp.connect_to_agent`` supersedes it) but remains the type of the
+    # connection ``acp.spawn_agent_process`` yields.
+    from acp import ClientSideConnection
     from acp.schema import (
         AgentPlanUpdate,
         AvailableCommandsUpdate,
