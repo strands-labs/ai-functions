@@ -35,6 +35,8 @@ emitted by the runtime dispatcher, never by the thread.
   per-``AssistantMessage`` totals) so usage is never double-counted.
 - ``RateLimitEvent``: ``CustomEvent(kind="claude_rate_limit", payload=...)``.
   Observability only — does not currently drive ``Coordinator.pause_signal``.
+- ``ConversationResetMessage``: ``CustomEvent(kind="claude_conversation_reset",
+  payload=...)`` carrying the new conversation id.
 - ``SystemMessage`` variants (``TaskStartedMessage``, ``TaskProgressMessage``,
   ``TaskNotificationMessage``, ``MirrorErrorMessage``, …):
   ``CustomEvent(kind=f"claude_system_{subtype}", payload=...)``.
@@ -56,6 +58,7 @@ from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
     ClaudeSDKClient,
+    ConversationResetMessage,
     McpServerConfig,
     Message,
     PermissionResult,
@@ -629,6 +632,19 @@ class ClaudeAgentThread(Thread[[str], str]):
         if isinstance(message, RateLimitEvent):
             ctx.on_event(
                 CustomEvent(kind="claude_rate_limit", payload=_rate_limit_payload(message)),
+            )
+            return None
+        if isinstance(message, ConversationResetMessage):
+            # Not a SystemMessage — it carries ids, no subtype.
+            ctx.on_event(
+                CustomEvent(
+                    kind="claude_conversation_reset",
+                    payload={
+                        "new_conversation_id": message.new_conversation_id,
+                        "uuid": message.uuid,
+                        "session_id": message.session_id,
+                    },
+                ),
             )
             return None
         ctx.on_event(
