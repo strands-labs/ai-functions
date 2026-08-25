@@ -233,6 +233,12 @@ async def test_fixed_port_without_fallback_raises() -> None:
         blocker.close()
 
 
+async def test_non_loopback_host_is_rejected() -> None:
+    """A non-loopback bind is refused at construction."""
+    with pytest.raises(ValueError, match="loopback"):
+        CoordinatorToolServer(host="0.0.0.0", port=0)
+
+
 async def test_register_before_start_raises() -> None:
     """A registration needs a bound port to mint a URL."""
     srv = CoordinatorToolServer(port=0)

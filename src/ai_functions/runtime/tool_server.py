@@ -2,10 +2,12 @@
 
 Serves the two coordinator tools from
 :mod:`ai_functions.runtime.coordinator_tools_core` (``list_threads`` /
-``send_message``) to any MCP-speaking agent runtime over HTTP, so foreign
-backends that cannot host an in-process MCP server (Codex, Kiro, anything
-else with an ``mcp_servers`` config) can join a team without per-runtime
-bridge code.
+``send_message``) over HTTP, so agent runtimes that take an ``mcp_servers`` URL
+— Codex among them — can join a team without per-runtime bridge code. Runs in
+the process owning the coordinator.
+
+Clients must send the token in the ``Authorization: Bearer`` header (Codex:
+``codex mcp add --url ... --bearer-token-env-var``).
 
 One server per worker. Each thread registers to receive its own capability
 URL::
@@ -22,9 +24,10 @@ URL::
 Security model: the port is reachable by any local process, so the
 *token* is the boundary. Each registration mints a ``secrets``-grade token
 that must appear both in the URL path and in the ``Authorization: Bearer``
-header (constant-time compared); the ``Host`` header must resolve to the
-bound host (DNS-rebinding defense per the MCP spec's guidance for local
-HTTP servers); deregistration revokes the token immediately.
+header (constant-time compared); the ``Host`` header must name the bound host or
+a loopback alias (DNS-rebinding defense per the MCP spec's guidance for local
+HTTP servers); deregistration revokes the token immediately. The bind host is
+loopback.
 
 The MCP app runs stateless (``stateless_http=True``): tools and one-shot
 reads only — no server-initiated messages, no resource subscriptions.
@@ -39,6 +42,7 @@ import asyncio
 import contextvars
 import errno
 import hmac
+import ipaddress
 import logging
 import secrets
 import socket
@@ -73,6 +77,21 @@ DEFAULT_PORT = 8787
 (e.g. Claude Code's ``allowedMcpServers``) match on URL patterns that must be
 written before the server exists, so one glob like ``http://127.0.0.1:8787/*``
 can cover every thread for the deployment's lifetime."""
+
+_STARTUP_TIMEOUT = 10.0
+"""Seconds to wait for uvicorn to report ``started`` before giving up."""
+
+_LOOPBACK_ALIASES = frozenset({"localhost", "127.0.0.1", "::1"})
+"""Names a loopback-bound server also answers to."""
+
+
+def _is_loopback(host: str) -> bool:
+    """Whether ``host`` names the loopback interface."""
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return host.lower() == "localhost"
+
 
 # ASGI shorthands (plain dicts/callables; no framework import needed).
 _Scope = MutableMapping[str, Any]  # pyright: ignore[reportExplicitAny]
@@ -248,9 +267,7 @@ class CoordinatorToolServer:
         """Configure the server; nothing binds until :meth:`start`.
 
         Args:
-            host: Interface to bind. The default serves local agent
-                subprocesses only; binding wider is the caller's decision and
-                should come with real network auth in front.
+            host: Loopback interface to bind.
             port: Fixed port to bind. Fixed by design — see
                 :data:`DEFAULT_PORT`. ``0`` requests an ephemeral port
                 outright.
@@ -258,7 +275,12 @@ class CoordinatorToolServer:
                 ephemeral one instead of failing. The fallback logs a warning
                 because a URL allowlist written for the fixed port will not
                 match it.
+
+        Raises:
+            ValueError: ``host`` is not a loopback address.
         """
+        if not _is_loopback(host):
+            raise ValueError(f"host must be a loopback address; got {host!r}")
         self._host = host
         self._requested_port = port
         self._fallback = fallback_to_ephemeral
@@ -267,9 +289,7 @@ class CoordinatorToolServer:
         self._server: uvicorn.Server | None = None
         self._serve_task: asyncio.Task[None] | None = None
         self._bound_port: int | None = None
-        self._allowed_hostnames: frozenset[str] = frozenset(
-            {host.lower(), "localhost", "127.0.0.1", "::1"},
-        )
+        self._allowed_hostnames: frozenset[str] = frozenset({host.lower()}) | _LOOPBACK_ALIASES
 
     # ── Lifecycle ──
 
@@ -283,6 +303,8 @@ class CoordinatorToolServer:
         Raises:
             OSError: The fixed port is taken and ``fallback_to_ephemeral``
                 is false.
+            TimeoutError: Serving did not come up within
+                :data:`_STARTUP_TIMEOUT` seconds.
 
         Concurrency:
             Idempotent; a started server ignores further ``start`` calls.
@@ -304,14 +326,24 @@ class CoordinatorToolServer:
         )
         self._server = uvicorn.Server(config)
         self._serve_task = asyncio.create_task(self._server.serve(sockets=[sock]))
+        deadline = asyncio.get_running_loop().time() + _STARTUP_TIMEOUT
         while not self._server.started:
             if self._serve_task.done():
                 self._serve_task.result()  # surface the startup failure
                 raise RuntimeError("tool server exited before startup completed")
+            if asyncio.get_running_loop().time() >= deadline:
+                await self.stop()
+                raise TimeoutError(
+                    f"tool server did not start within {_STARTUP_TIMEOUT}s",
+                )
             await asyncio.sleep(0.01)
 
     async def stop(self) -> None:
         """Stop serving and revoke every registration.
+
+        In-flight tool calls are dropped rather than drained: a client waiting
+        on one (``send_message(mode="wait")``, say) sees the connection close
+        mid-response.
 
         Concurrency:
             Idempotent; stopping a never-started server is a no-op.
@@ -377,7 +409,10 @@ class CoordinatorToolServer:
         return ToolServerRegistration(url=f"{self.base_url}/mcp/{token}", token=token)
 
     def deregister(self, thread_id: ThreadId) -> None:
-        """Revoke ``thread_id``'s token; requests with it fail immediately.
+        """Revoke ``thread_id``'s token; later requests with it 404.
+
+        A request already dispatched keeps the registration it resolved for the
+        rest of its lifetime; revocation is not a cancellation.
 
         Concurrency:
             Idempotent; deregistering an unknown thread is a no-op.

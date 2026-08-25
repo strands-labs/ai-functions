@@ -2,10 +2,11 @@
 
 Serves the two coordinator tools from
 :mod:`ai_functions.runtime.coordinator_tools_core` (``list_threads`` /
-``send_message``) to any MCP-speaking agent runtime over HTTP, so foreign
-backends that cannot host an in-process MCP server (Codex, Kiro, anything
-else with an ``mcp_servers`` config) can join a team without per-runtime
-bridge code.
+``send_message``) over HTTP, so agent runtimes that take an ``mcp_servers`` URL
+— Codex among them — can join a team without per-runtime bridge code. Runs in
+the process owning the coordinator.
+
+Clients must send the token in the ``Authorization: Bearer`` header.
 
 One server per worker; each thread registers to receive its own capability
 URL of the form ``http://<host>:<port>/mcp/<token>``.
@@ -13,9 +14,10 @@ URL of the form ``http://<host>:<port>/mcp/<token>``.
 Security model: the port is reachable by any local process, so the *token*
 is the boundary. Each registration mints a ``secrets``-grade token that must
 appear both in the URL path and in the ``Authorization: Bearer`` header
-(constant-time compared); the ``Host`` header must resolve to the bound host
-(DNS-rebinding defense per the MCP spec's guidance for local HTTP servers);
-deregistration revokes the token immediately.
+(constant-time compared); the ``Host`` header must name the bound host or a
+loopback alias (DNS-rebinding defense per the MCP spec's guidance for local
+HTTP servers); deregistration revokes the token immediately. The bind host is
+loopback.
 
 The MCP app runs stateless (``stateless_http=True``): tools and one-shot
 reads only — no server-initiated messages, no resource subscriptions.
@@ -73,9 +75,7 @@ class CoordinatorToolServer:
         """Configure the server; nothing binds until :meth:`start`.
 
         Args:
-            host: Interface to bind. The default serves local agent
-                subprocesses only; binding wider is the caller's decision and
-                should come with real network auth in front.
+            host: Loopback interface to bind.
             port: Fixed port to bind, :data:`DEFAULT_PORT` by default — see
                 its docstring for why fixed. ``0`` requests an ephemeral port
                 outright.
@@ -83,6 +83,9 @@ class CoordinatorToolServer:
                 ephemeral one instead of failing. The fallback logs a warning
                 because a URL allowlist written for the fixed port will not
                 match it.
+
+        Raises:
+            ValueError: ``host`` is not a loopback address.
         """
         ...
 
@@ -96,6 +99,7 @@ class CoordinatorToolServer:
         Raises:
             OSError: The fixed port is taken and ``fallback_to_ephemeral``
                 is false.
+            TimeoutError: Serving did not come up within the startup timeout.
 
         Concurrency:
             Idempotent; a started server ignores further ``start`` calls.
@@ -104,6 +108,10 @@ class CoordinatorToolServer:
 
     async def stop(self) -> None:
         """Stop serving and revoke every registration.
+
+        In-flight tool calls are dropped rather than drained: a client waiting
+        on one (``send_message(mode="wait")``, say) sees the connection close
+        mid-response.
 
         Concurrency:
             Idempotent; stopping a never-started server is a no-op.
@@ -146,7 +154,10 @@ class CoordinatorToolServer:
         ...
 
     def deregister(self, thread_id: ThreadId) -> None:
-        """Revoke ``thread_id``'s token; requests with it fail immediately.
+        """Revoke ``thread_id``'s token; later requests with it 404.
+
+        A request already dispatched keeps the registration it resolved for the
+        rest of its lifetime; revocation is not a cancellation.
 
         Concurrency:
             Idempotent; deregistering an unknown thread is a no-op.
