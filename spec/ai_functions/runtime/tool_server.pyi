@@ -9,15 +9,15 @@ the process owning the coordinator.
 Clients must send the token in the ``Authorization: Bearer`` header.
 
 One server per worker; each thread registers to receive its own capability
-URL of the form ``http://<host>:<port>/mcp/<token>``.
+URL of the form ``http://127.0.0.1:<port>/mcp/<token>``.
 
-Security model: the port is reachable by any local process, so the *token*
-is the boundary. Each registration mints a ``secrets``-grade token that must
-appear both in the URL path and in the ``Authorization: Bearer`` header
-(constant-time compared); the ``Host`` header must name the bound host or a
-loopback alias (DNS-rebinding defense per the MCP spec's guidance for local
-HTTP servers); deregistration revokes the token immediately. The bind host is
-loopback.
+The server binds 127.0.0.1 on a system-assigned port; pass the registration URL
+to the runtime as it starts. The port is reachable by any local process, so the
+*token* is the boundary: each registration mints a ``secrets``-grade token that
+must appear both in the URL path and in the ``Authorization: Bearer`` header
+(constant-time compared), the ``Host`` header must name the bound address
+(DNS-rebinding defense per the MCP spec's guidance for local HTTP servers), and
+deregistration revokes the token immediately.
 
 The MCP app runs stateless (``stateless_http=True``): tools and one-shot
 reads only — no server-initiated messages, no resource subscriptions.
@@ -30,12 +30,6 @@ from typing import final
 
 from ..protocols import Coordinator
 from ..types import ThreadId
-
-DEFAULT_PORT: int
-"""Default fixed port. Fixed (not ephemeral) by design: MCP URL allowlists
-(e.g. Claude Code's ``allowedMcpServers``) match on URL patterns that must be
-written before the server exists, so one glob like ``http://127.0.0.1:8787/*``
-can cover every thread for the deployment's lifetime."""
 
 @dataclass(frozen=True)
 class ToolServerRegistration:
@@ -65,28 +59,8 @@ class CoordinatorToolServer:
         each other's registration.
     """
 
-    def __init__(
-        self,
-        *,
-        host: str = "127.0.0.1",
-        port: int = ...,
-        fallback_to_ephemeral: bool = True,
-    ) -> None:
-        """Configure the server; nothing binds until :meth:`start`.
-
-        Args:
-            host: Loopback interface to bind.
-            port: Fixed port to bind, :data:`DEFAULT_PORT` by default — see
-                its docstring for why fixed. ``0`` requests an ephemeral port
-                outright.
-            fallback_to_ephemeral: When the fixed port is taken, bind an
-                ephemeral one instead of failing. The fallback logs a warning
-                because a URL allowlist written for the fixed port will not
-                match it.
-
-        Raises:
-            ValueError: ``host`` is not a loopback address.
-        """
+    def __init__(self) -> None:
+        """Configure the server; nothing binds until :meth:`start`."""
         ...
 
     async def start(self) -> None:
@@ -97,8 +71,6 @@ class CoordinatorToolServer:
             - Requests are answered (all-404 until a thread registers).
 
         Raises:
-            OSError: The fixed port is taken and ``fallback_to_ephemeral``
-                is false.
             TimeoutError: Serving did not come up within the startup timeout.
 
         Concurrency:
@@ -125,11 +97,6 @@ class CoordinatorToolServer:
         Raises:
             RuntimeError: The server is not started.
         """
-        ...
-
-    @property
-    def port(self) -> int | None:
-        """The bound port while running, else ``None``."""
         ...
 
     def register(self, coordinator: Coordinator, thread_id: ThreadId) -> ToolServerRegistration:

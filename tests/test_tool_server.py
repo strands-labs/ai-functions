@@ -9,7 +9,6 @@ required in both the path and the header, and revocation is immediate.
 from __future__ import annotations
 
 import asyncio
-import socket
 from typing import Any
 
 import httpx
@@ -85,7 +84,7 @@ async def _call(url: str, token: str, tool: str, args: dict[str, Any]) -> str:  
 
 @pytest.fixture
 async def server():  # noqa: ANN201 - pytest fixture
-    srv = CoordinatorToolServer(port=0)
+    srv = CoordinatorToolServer()
     await srv.start()
     yield srv
     await srv.stop()
@@ -201,54 +200,16 @@ async def test_unrecognized_host_is_rejected(server: CoordinatorToolServer) -> N
         assert r.status_code == 403
 
 
-async def test_fixed_port_falls_back_to_ephemeral_when_taken() -> None:
-    """A taken fixed port falls back to an ephemeral bind with a warning."""
-    blocker = socket.socket()
-    blocker.bind(("127.0.0.1", 0))
-    blocker.listen(1)
-    taken_port = blocker.getsockname()[1]
-    try:
-        srv = CoordinatorToolServer(port=taken_port, fallback_to_ephemeral=True)
-        await srv.start()
-        try:
-            assert srv.port is not None
-            assert srv.port != taken_port
-        finally:
-            await srv.stop()
-    finally:
-        blocker.close()
-
-
-async def test_fixed_port_without_fallback_raises() -> None:
-    """fallback_to_ephemeral=False turns a taken port into a hard error."""
-    blocker = socket.socket()
-    blocker.bind(("127.0.0.1", 0))
-    blocker.listen(1)
-    taken_port = blocker.getsockname()[1]
-    try:
-        srv = CoordinatorToolServer(port=taken_port, fallback_to_ephemeral=False)
-        with pytest.raises(OSError):
-            await srv.start()
-    finally:
-        blocker.close()
-
-
-async def test_non_loopback_host_is_rejected() -> None:
-    """A non-loopback bind is refused at construction."""
-    with pytest.raises(ValueError, match="loopback"):
-        CoordinatorToolServer(host="0.0.0.0", port=0)
-
-
 async def test_register_before_start_raises() -> None:
     """A registration needs a bound port to mint a URL."""
-    srv = CoordinatorToolServer(port=0)
+    srv = CoordinatorToolServer()
     with pytest.raises(RuntimeError):
         srv.register(_StubCoordinator(), ThreadId("t-alice"))  # pyright: ignore[reportArgumentType]
 
 
 async def test_stop_is_idempotent() -> None:
     """Stopping twice (or before starting) is a no-op."""
-    srv = CoordinatorToolServer(port=0)
+    srv = CoordinatorToolServer()
     await srv.stop()
     await srv.start()
     await srv.stop()

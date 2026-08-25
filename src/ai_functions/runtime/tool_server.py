@@ -15,19 +15,19 @@ URL::
     server = CoordinatorToolServer()
     await server.start()
     reg = server.register(coordinator, thread_id)
-    # reg.url  -> http://127.0.0.1:8787/mcp/<token>
+    # reg.url  -> http://127.0.0.1:<port>/mcp/<token>
     # reg.token, for transports that pass the secret out of band
     ...
     server.deregister(thread_id)
     await server.stop()
 
-Security model: the port is reachable by any local process, so the
-*token* is the boundary. Each registration mints a ``secrets``-grade token
-that must appear both in the URL path and in the ``Authorization: Bearer``
-header (constant-time compared); the ``Host`` header must name the bound host or
-a loopback alias (DNS-rebinding defense per the MCP spec's guidance for local
-HTTP servers); deregistration revokes the token immediately. The bind host is
-loopback.
+The server binds 127.0.0.1 on a system-assigned port; pass ``reg.url`` to the
+runtime as it starts. The port is reachable by any local process, so the *token*
+is the boundary: each registration mints a ``secrets``-grade token that must
+appear both in the URL path and in the ``Authorization: Bearer`` header
+(constant-time compared), the ``Host`` header must name the bound address
+(DNS-rebinding defense per the MCP spec's guidance for local HTTP servers), and
+deregistration revokes the token immediately.
 
 The MCP app runs stateless (``stateless_http=True``): tools and one-shot
 reads only — no server-initiated messages, no resource subscriptions.
@@ -40,10 +40,7 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
-import errno
 import hmac
-import ipaddress
-import logging
 import secrets
 import socket
 from collections.abc import Awaitable, Callable, MutableMapping
@@ -70,27 +67,11 @@ except ImportError as exc:  # pragma: no cover - exercised only without the extr
         "    pip install 'strands-ai-functions[runtime-tools]'",
     ) from exc
 
-logger = logging.getLogger(__name__)
-
-DEFAULT_PORT = 8787
-"""Default fixed port. Fixed (not ephemeral) by design: MCP URL allowlists
-(e.g. Claude Code's ``allowedMcpServers``) match on URL patterns that must be
-written before the server exists, so one glob like ``http://127.0.0.1:8787/*``
-can cover every thread for the deployment's lifetime."""
+_HOST = "127.0.0.1"
+"""Bind address, and the only ``Host`` header the server answers to."""
 
 _STARTUP_TIMEOUT = 10.0
 """Seconds to wait for uvicorn to report ``started`` before giving up."""
-
-_LOOPBACK_ALIASES = frozenset({"localhost", "127.0.0.1", "::1"})
-"""Names a loopback-bound server also answers to."""
-
-
-def _is_loopback(host: str) -> bool:
-    """Whether ``host`` names the loopback interface."""
-    try:
-        return ipaddress.ip_address(host).is_loopback
-    except ValueError:
-        return host.lower() == "localhost"
 
 
 # ASGI shorthands (plain dicts/callables; no framework import needed).
@@ -226,11 +207,12 @@ class _TokenRouter:
         finally:
             _active_registration.reset(ctx_token)
 
-    def _host_allowed(self, scope: _Scope) -> bool:
+    @staticmethod
+    def _host_allowed(scope: _Scope) -> bool:
         """Accept only Host headers naming the bound host (DNS-rebinding defense)."""
         raw = dict(scope.get("headers") or []).get(b"host", b"")
         hostname = raw.decode("latin-1").rsplit(":", 1)[0].strip("[]").lower()
-        return hostname in self._server._allowed_hostnames  # pyright: ignore[reportPrivateUsage]  # module-internal
+        return hostname == _HOST
 
     @staticmethod
     def _bearer(scope: _Scope) -> str | None:
@@ -257,39 +239,13 @@ class CoordinatorToolServer:
         each other's registration.
     """
 
-    def __init__(
-        self,
-        *,
-        host: str = "127.0.0.1",
-        port: int = DEFAULT_PORT,
-        fallback_to_ephemeral: bool = True,
-    ) -> None:
-        """Configure the server; nothing binds until :meth:`start`.
-
-        Args:
-            host: Loopback interface to bind.
-            port: Fixed port to bind. Fixed by design — see
-                :data:`DEFAULT_PORT`. ``0`` requests an ephemeral port
-                outright.
-            fallback_to_ephemeral: When the fixed port is taken, bind an
-                ephemeral one instead of failing. The fallback logs a warning
-                because a URL allowlist written for the fixed port will not
-                match it.
-
-        Raises:
-            ValueError: ``host`` is not a loopback address.
-        """
-        if not _is_loopback(host):
-            raise ValueError(f"host must be a loopback address; got {host!r}")
-        self._host = host
-        self._requested_port = port
-        self._fallback = fallback_to_ephemeral
+    def __init__(self) -> None:
+        """Configure the server; nothing binds until :meth:`start`."""
         self._registrations: dict[str, _Registration] = {}
         self._by_thread: dict[ThreadId, str] = {}
         self._server: uvicorn.Server | None = None
         self._serve_task: asyncio.Task[None] | None = None
         self._bound_port: int | None = None
-        self._allowed_hostnames: frozenset[str] = frozenset({host.lower()}) | _LOOPBACK_ALIASES
 
     # ── Lifecycle ──
 
@@ -301,8 +257,6 @@ class CoordinatorToolServer:
             - Requests are answered (all-404 until a thread registers).
 
         Raises:
-            OSError: The fixed port is taken and ``fallback_to_ephemeral``
-                is false.
             TimeoutError: Serving did not come up within
                 :data:`_STARTUP_TIMEOUT` seconds.
 
@@ -319,7 +273,7 @@ class CoordinatorToolServer:
         app = _TokenRouter(_build_mcp_app().streamable_http_app(), self)
         config = uvicorn.Config(
             app,
-            host=self._host,
+            host=_HOST,
             port=bound_port,
             log_level="warning",
             lifespan="on",
@@ -368,12 +322,7 @@ class CoordinatorToolServer:
         """
         if self._bound_port is None:
             raise RuntimeError("CoordinatorToolServer is not started")
-        return f"http://{self._host}:{self._bound_port}"
-
-    @property
-    def port(self) -> int | None:
-        """The bound port while running, else ``None``."""
-        return self._bound_port
+        return f"http://{_HOST}:{self._bound_port}"
 
     # ── Registrations ──
 
@@ -427,26 +376,12 @@ class CoordinatorToolServer:
         """Resolve a path token to its registration; ``None`` when revoked/unknown."""
         return self._registrations.get(token)
 
-    def _bind_socket(self) -> socket.socket:
-        """Bind the listening socket, honouring the ephemeral fallback."""
+    @staticmethod
+    def _bind_socket() -> socket.socket:
+        """Bind the listening socket on a system-assigned port."""
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:
-            return self._bind(self._requested_port)
-        except OSError as exc:
-            if exc.errno != errno.EADDRINUSE or not self._fallback or self._requested_port == 0:
-                raise
-            logger.warning(
-                "tool server port %d is in use; falling back to an ephemeral port — "
-                "URL allowlists written for the fixed port will not match",
-                self._requested_port,
-            )
-            return self._bind(0)
-
-    def _bind(self, port: int) -> socket.socket:
-        family = socket.AF_INET6 if ":" in self._host else socket.AF_INET
-        sock = socket.socket(family, socket.SOCK_STREAM)
-        try:
-            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            sock.bind((self._host, port))
+            sock.bind((_HOST, 0))
             sock.listen(2048)
             sock.setblocking(False)
         except BaseException:

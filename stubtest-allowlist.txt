@@ -78,9 +78,6 @@ ai_functions.optimizer.textgrad.logger
 ai_functions.memory.agentcore_backend.logger
 ai_functions.memory.base.logger
 
-# Tool server module logger is internal implementation detail.
-ai_functions.runtime.tool_server.logger
-
 # economics: module-level loggers are private implementation detail
 ai_functions.experimental.economics.beliefs.logger
 ai_functions.experimental.economics.function.logger
