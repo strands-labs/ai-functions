@@ -78,6 +78,9 @@ ai_functions.optimizer.textgrad.logger
 ai_functions.memory.agentcore_backend.logger
 ai_functions.memory.base.logger
 
+# Codex adapter module logger is internal implementation detail.
+ai_functions.codex.codex.logger
+
 # economics: module-level loggers are private implementation detail
 ai_functions.experimental.economics.beliefs.logger
 ai_functions.experimental.economics.function.logger

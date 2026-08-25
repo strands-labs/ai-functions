@@ -202,8 +202,9 @@ class CodexAgentThread(Thread[[str], str]):
             text: Message body delivered by the runtime or an external sender.
 
         Ensures:
-            - The message reaches the session mid-turn or on the next turn.
             - No new cycle is started by this call.
+            - A message that cannot be steered is buffered for the next turn,
+              unless :meth:`teardown` runs first.
         """
         ...
 
@@ -231,7 +232,8 @@ class CodexAgentThread(Thread[[str], str]):
             - TOOL_CALL / TOOL_RESULT — per command, file-change, MCP,
               dynamic-tool, or web-search item.
             - TOKEN_USAGE — exactly one per turn.
-            - CustomEvent — codex_error / codex_plan / codex_* passthroughs.
+            - CustomEvent — codex_error / codex_plan / codex_item_* /
+              codex_* passthroughs.
 
         Raises:
             asyncio.CancelledError: ``ctx.cancel_signal`` was set — at the
@@ -261,6 +263,7 @@ class CodexAgentThread(Thread[[str], str]):
 
         Ensures:
             - Any running ``AsyncCodex`` client is closed.
+            - In-flight steers are cancelled and awaited.
             - Pending inject-buffer entries are dropped.
 
         Concurrency:

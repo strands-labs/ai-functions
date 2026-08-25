@@ -42,6 +42,10 @@ emitted by the runtime dispatcher, never by the thread.
 - ``error`` (``ErrorNotification``): ``CustomEvent(kind="codex_error")``.
 - ``turn/plan/updated`` / ``item/plan/delta`` / ``PlanThreadItem``:
   ``CustomEvent(kind="codex_plan", payload=...)``.
+- Every other thread item on ``item/completed``:
+  ``CustomEvent(kind=f"codex_item_{item.type}", payload=...)`` — the item union
+  grows with the CLI, so unmapped variants degrade to observability rather than
+  being dropped.
 - ``turn/completed``: terminal. ``failed`` raises ``AIFunctionError`` with
   the turn error's message; ``interrupted`` raises
   ``asyncio.CancelledError``; ``completed`` yields the turn result.
@@ -63,6 +67,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import logging
 from collections.abc import Hashable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast, final, override
@@ -94,27 +99,33 @@ try:
     from openai_codex import ApprovalMode, AsyncCodex, Sandbox
     from openai_codex.client import CodexConfig
     from openai_codex.generated.v2_all import (
-        AgentMessageDeltaNotification,
         AgentMessageThreadItem,
         CommandExecutionThreadItem,
         DynamicToolCallThreadItem,
-        ErrorNotification,
         FileChangeThreadItem,
-        ItemCompletedNotification,
-        ItemStartedNotification,
         McpToolCallThreadItem,
         MessagePhase,
         PlanThreadItem,
-        ReasoningSummaryTextDeltaNotification,
-        ReasoningTextDeltaNotification,
         ReasoningThreadItem,
-        ThreadTokenUsageUpdatedNotification,
-        TurnCompletedNotification,
         TurnStatus,
         UserMessageThreadItem,
         WebSearchThreadItem,
     )
-    from openai_codex.models import Notification, UnknownNotification
+
+    # The notification types have a curated home in ``openai_codex.models``;
+    # only the thread-item classes and enums must come from the generated module.
+    from openai_codex.models import (
+        AgentMessageDeltaNotification,
+        ErrorNotification,
+        ItemCompletedNotification,
+        ItemStartedNotification,
+        Notification,
+        ReasoningSummaryTextDeltaNotification,
+        ReasoningTextDeltaNotification,
+        ThreadTokenUsageUpdatedNotification,
+        TurnCompletedNotification,
+        UnknownNotification,
+    )
 except ImportError as exc:  # pragma: no cover - exercised only without the extra
     raise ImportError(
         "CodexAgent requires the optional 'codex' extra (the OpenAI Codex "
@@ -133,10 +144,34 @@ if TYPE_CHECKING:
 
 from pydantic import BaseModel
 
+logger = logging.getLogger(__name__)
+
+_MAPPED_ITEM_TYPES = frozenset(
+    {
+        "userMessage",
+        "agentMessage",
+        "reasoning",
+        "plan",
+        "commandExecution",
+        "fileChange",
+        "mcpToolCall",
+        "dynamicToolCall",
+        "webSearch",
+    },
+)
+"""Wire discriminators of the thread items this adapter maps to typed events.
+Items outside this set are re-emitted as ``codex_item_*`` CustomEvents."""
+
 
 def _item_root(item: object) -> object:
     """Unwrap the generated ``ThreadItem`` RootModel to its concrete variant."""
     return getattr(item, "root", item)
+
+
+def _item_type(item: object) -> str:
+    """Wire discriminator of a thread item (``agentMessage``, ``webSearch``, …)."""
+    value = getattr(item, "type", None)
+    return value if isinstance(value, str) else "unknown"
 
 
 def _status_value(status: object) -> str:
@@ -356,6 +391,7 @@ class CodexAgentThread(Thread[[str], str]):
         "_active_ctx",
         "_active_turn",
         "_inject_buffer",
+        "_pending_steers",
     )
 
     def __init__(self, template: CodexAgent) -> None:
@@ -372,6 +408,9 @@ class CodexAgentThread(Thread[[str], str]):
         # Pending side-channel messages delivered via ``notify`` while idle;
         # prepended to the next outgoing user turn.
         self._inject_buffer: list[str] = []
+        # In-flight steer tasks, held so the loop keeps a strong reference and
+        # ``teardown`` can cancel them.
+        self._pending_steers: set[asyncio.Task[None]] = set()
 
     @property
     def name(self) -> str:
@@ -390,8 +429,9 @@ class CodexAgentThread(Thread[[str], str]):
             text: Message body delivered by the runtime or an external sender.
 
         Ensures:
-            - The message reaches the session mid-turn or on the next turn.
             - No new cycle is started by this call.
+            - A message that cannot be steered is buffered for the next turn,
+              unless :meth:`teardown` runs first.
         """
         handle = self._active_turn
         ctx = self._active_ctx
@@ -402,11 +442,15 @@ class CodexAgentThread(Thread[[str], str]):
         async def _steer() -> None:
             try:
                 _ = await handle.steer(text)
-                ctx.on_event(MessageUserEvent(text=text))
-            except Exception:  # noqa: BLE001 - the turn may have just completed
+            except Exception:
+                logger.exception("steering into turn %s failed; buffering for the next turn", handle.id)
                 self._inject_buffer.append(text)
+                return
+            ctx.on_event(MessageUserEvent(text=text))
 
-        _ = asyncio.create_task(_steer())
+        task = asyncio.create_task(_steer())
+        self._pending_steers.add(task)
+        task.add_done_callback(self._pending_steers.discard)
 
     async def execute(self, ctx: ThreadContext, prompt: str) -> str:
         """Send ``prompt`` to the Codex thread and return its string result.
@@ -432,7 +476,8 @@ class CodexAgentThread(Thread[[str], str]):
             - TOOL_CALL / TOOL_RESULT — per command, file-change, MCP,
               dynamic-tool, or web-search item.
             - TOKEN_USAGE — exactly one per turn.
-            - CustomEvent — codex_error / codex_plan / codex_* passthroughs.
+            - CustomEvent — codex_error / codex_plan / codex_item_* /
+              codex_* passthroughs.
 
         Raises:
             asyncio.CancelledError: ``ctx.cancel_signal`` was set — at the
@@ -485,11 +530,20 @@ class CodexAgentThread(Thread[[str], str]):
 
         Ensures:
             - Any running ``AsyncCodex`` client is closed.
+            - In-flight steers are cancelled and awaited.
             - Pending inject-buffer entries are dropped.
 
         Concurrency:
             Idempotent; tearing down a never-connected thread is a no-op.
         """
+        # Settle the steers before clearing the buffer: a steer failing after
+        # the clear would re-append to it on a torn-down thread.
+        steers = tuple(self._pending_steers)
+        self._pending_steers.clear()
+        for task in steers:
+            _ = task.cancel()
+        if steers:
+            _ = await asyncio.gather(*steers, return_exceptions=True)
         self._inject_buffer.clear()
         codex = self._codex
         self._codex = None
@@ -705,6 +759,10 @@ class CodexAgentThread(Thread[[str], str]):
         result = _tool_result_for(item)
         if result is not None:
             ctx.on_event(result)
+            return
+        item_type = _item_type(item)
+        if item_type not in _MAPPED_ITEM_TYPES:
+            ctx.on_event(CustomEvent(kind=f"codex_item_{item_type}", payload=_payload_dict(item)))
 
 
 def _breakdown_to_token_usage(usage: ThreadTokenUsage) -> TokenUsage:
