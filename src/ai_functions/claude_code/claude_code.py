@@ -40,6 +40,9 @@ emitted by the runtime dispatcher, never by the thread.
 - ``SystemMessage`` variants (``TaskStartedMessage``, ``TaskProgressMessage``,
   ``TaskNotificationMessage``, ``MirrorErrorMessage``, …):
   ``CustomEvent(kind=f"claude_system_{subtype}", payload=...)``.
+- Any other member of the SDK's ``Message`` union (it grows across releases):
+  ``CustomEvent(kind="claude_message", payload=...)`` with the dataclass fields
+  flattened — unknown messages degrade to observability, never to an error.
 
 Invariants:
     I2 — every emitted event goes through ``Coordinator.append_event``.
@@ -239,6 +242,15 @@ def _system_message_payload(message: SystemMessage) -> dict[str, object]:
         for field in dataclasses.fields(message):
             if field.name in ("subtype", "data"):
                 continue
+            payload[field.name] = getattr(message, field.name)
+    return payload
+
+
+def _unknown_message_payload(message: Message) -> dict[str, object]:
+    """Flatten an SDK message this adapter has no mapping for to a payload dict."""
+    payload: dict[str, object] = {"message_type": type(message).__name__}
+    if dataclasses.is_dataclass(message) and not isinstance(message, type):
+        for field in dataclasses.fields(message):
             payload[field.name] = getattr(message, field.name)
     return payload
 
@@ -647,11 +659,18 @@ class ClaudeAgentThread(Thread[[str], str]):
                 ),
             )
             return None
+        if isinstance(message, SystemMessage):
+            ctx.on_event(
+                CustomEvent(
+                    kind=f"claude_system_{message.subtype}",
+                    payload=_system_message_payload(message),
+                ),
+            )
+            return None
+        # The ``Message`` union grows with the SDK; degrade members we don't know
+        # to observability rather than raising AttributeError on ``subtype``.
         ctx.on_event(
-            CustomEvent(
-                kind=f"claude_system_{message.subtype}",
-                payload=_system_message_payload(message),
-            ),
+            CustomEvent(kind="claude_message", payload=_unknown_message_payload(message)),
         )
         return None
 

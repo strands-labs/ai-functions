@@ -48,7 +48,9 @@ network = [
     "cloudpickle>=3.0.0",
 ]
 claude-code = [
-    "claude-agent-sdk>=0.1.66",
+    # 0.2.137 first exports ``ConversationResetMessage``, which the thread maps
+    # to a CustomEvent; earlier releases cannot satisfy the import.
+    "claude-agent-sdk>=0.2.137",
 ]
 kiro = [
     "agent-client-protocol>=0.12.1,<0.13",
@@ -82,7 +84,7 @@ dependencies = [
     "mypy>=1.20.0",
     "websockets>=12.0",
     "cloudpickle>=3.0.0",
-    "claude-agent-sdk>=0.1.66",
+    "claude-agent-sdk>=0.2.137",
     "typer>=0.12",
     "rich>=13.7",
     "textual>=0.70",
