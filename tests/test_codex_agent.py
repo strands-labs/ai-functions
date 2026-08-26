@@ -18,6 +18,7 @@ import pytest
 pytest.importorskip("openai_codex")
 
 from codex_mock_model import MockModelServer, assistant_turn, codex_test_config  # noqa: E402
+from openai_codex.client import CodexConfig  # noqa: E402
 from openai_codex.generated.v2_all import (  # noqa: E402
     AgentMessageDeltaNotification,
     AgentMessageThreadItem,
@@ -32,8 +33,15 @@ from openai_codex.generated.v2_all import (  # noqa: E402
 )
 from openai_codex.models import Notification, UnknownNotification  # noqa: E402
 
-from ai_functions.codex.codex import CodexAgent, CodexAgentThread, _TurnState  # noqa: E402
+from ai_functions.codex.codex import (  # noqa: E402
+    _RUNTIME_TOKEN_ENV,
+    CodexAgent,
+    CodexAgentThread,
+    _config_with_runtime_tools,
+    _TurnState,
+)
 from ai_functions.runtime import InMemoryCoordinator, LocalWorker  # noqa: E402
+from ai_functions.runtime.tool_server import ToolServerRegistration  # noqa: E402
 from ai_functions.types import Event, ThreadContext, ThreadId  # noqa: E402
 from ai_functions.types.events import EventKind  # noqa: E402
 
@@ -237,6 +245,39 @@ async def test_unknown_notification_becomes_custom_event() -> None:
     assert event.payload == {"x": 1}
 
 
+def test_runtime_tools_config_injects_url_and_token() -> None:
+    """The launch config gains the MCP server overrides; the token rides the env."""
+    reg = ToolServerRegistration(url="http://127.0.0.1:1234/mcp/tok", token="tok")
+    base = CodexConfig(config_overrides=('model="o3"',), env={"KEEP": "1"})
+    merged = _config_with_runtime_tools(base, reg)
+
+    assert merged.config_overrides == (
+        'model="o3"',
+        'mcp_servers.ai_functions_runtime.url="http://127.0.0.1:1234/mcp/tok"',
+        f'mcp_servers.ai_functions_runtime.bearer_token_env_var="{_RUNTIME_TOKEN_ENV}"',
+    )
+    assert merged.env == {"KEEP": "1", _RUNTIME_TOKEN_ENV: "tok"}
+    # The original config is untouched (dataclasses.replace semantics).
+    assert base.config_overrides == ('model="o3"',)
+    assert base.env == {"KEEP": "1"}
+
+
+def test_runtime_tools_config_accepts_none() -> None:
+    """A template with no config still gets a wired launch config."""
+    reg = ToolServerRegistration(url="http://127.0.0.1:1234/mcp/tok", token="tok")
+    merged = _config_with_runtime_tools(None, reg)
+    assert any(o.startswith("mcp_servers.ai_functions_runtime.url=") for o in merged.config_overrides)
+    assert merged.env == {_RUNTIME_TOKEN_ENV: "tok"}
+
+
+def test_runtime_tools_config_rejects_reserved_key() -> None:
+    """User overrides may not squat on the reserved MCP server key."""
+    reg = ToolServerRegistration(url="http://127.0.0.1:1234/mcp/tok", token="tok")
+    base = CodexConfig(config_overrides=('mcp_servers.ai_functions_runtime.url="http://evil"',))
+    with pytest.raises(ValueError, match="reserved"):
+        _ = _config_with_runtime_tools(base, reg)
+
+
 async def test_notify_while_idle_buffers() -> None:
     """With no turn in flight, notify() parks the message for the next turn."""
     thread = _thread()
@@ -370,3 +411,24 @@ async def test_fork_resumes_a_distinct_codex_thread(tmp_path: Path) -> None:
             assert forked.resume_thread_id != source_id
         finally:
             await thread.teardown()
+
+
+@pytest.mark.integration
+async def test_runtime_tools_reach_the_model(tmp_path: Path) -> None:
+    """The app-server connects to this thread's tool server and offers the
+    runtime tools to the model; teardown stops the server."""
+    with MockModelServer() as model:
+        model.enqueue(assistant_turn("ok", response_id="r1"))
+        template = CodexAgent(config=codex_test_config(tmp_path, model.url))
+        thread = template.to_thread()
+        rec = _Recorder()
+        try:
+            _ = await asyncio.wait_for(thread.execute(rec.ctx(), "hello"), timeout=120)
+            # The recorded model request proves the whole chain: the app-server
+            # resolved our config overrides, fetched the tool list over HTTP
+            # MCP (bearer token and all), and exposed it to the model.
+            tool_names = [t.get("name") for t in model.requests[0].get("tools", [])]
+            assert "mcp__ai_functions_runtime" in tool_names
+        finally:
+            await thread.teardown()
+        assert thread._tool_server is None  # pyright: ignore[reportPrivateUsage]

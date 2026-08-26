@@ -20,7 +20,14 @@ Approvals: the public SDK exposes only ``ApprovalMode.auto_review`` /
 ``deny_all`` — there is no human-in-the-loop callback, so approvals are not
 routed through ``ctx.on_interrupt``.
 
-Requires the ``codex`` extra (``openai-codex``, which bundles the runtime).
+Runtime tools: each thread starts its own ``CoordinatorToolServer`` when it
+connects and injects the capability URL (token via the subprocess
+environment) into the app-server launch config, so the Codex agent can call
+``list_threads`` / ``send_message`` over HTTP MCP. ``teardown`` stops the
+server.
+
+Requires the ``codex`` extra (``openai-codex``, which bundles the runtime,
+plus the HTTP MCP server dependencies).
 """
 
 from collections.abc import Hashable, Sequence
@@ -263,6 +270,7 @@ class CodexAgentThread(Thread[[str], str]):
 
         Ensures:
             - Any running ``AsyncCodex`` client is closed.
+            - The runtime tool server is stopped and its token revoked.
             - In-flight steers are cancelled and awaited.
             - Pending inject-buffer entries are dropped.
 

@@ -64,6 +64,10 @@ runtime-tools = [
 ]
 codex = [
     "openai-codex>=0.144.4",
+    # The Codex thread serves the runtime tools to the app-server over HTTP
+    # MCP (CoordinatorToolServer), so the runtime-tools deps come along.
+    "mcp>=1.29",
+    "uvicorn>=0.30",
 ]
 
 [project.scripts]

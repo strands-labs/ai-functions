@@ -59,6 +59,17 @@ falling back to the last message with no phase (mirrors the SDK's own
 not_loaded`` with an empty ``items`` list, so items are accumulated from the
 stream, never read from the completion payload.
 
+Runtime tools
+─────────────
+
+Codex reaches the runtime tools (``list_threads`` / ``send_message``) over
+HTTP MCP: each thread starts its own :class:`CoordinatorToolServer` when it
+connects, registers itself for a capability URL, and injects the endpoint
+into the app-server launch via ``--config`` overrides
+(``mcp_servers.ai_functions_runtime.url`` plus a ``bearer_token_env_var``
+naming an env var that carries the token). The server lives exactly as long
+as the connection: ``teardown`` stops it after closing the SDK client.
+
 Invariants:
     I2 — every emitted event goes through ``Coordinator.append_event``.
 """
@@ -79,6 +90,7 @@ from strands.types.tools import AgentTool
 from ..ai_thread.errors import AIFunctionError
 from ..ai_thread.postcondition import PostCondition, run_post_condition_loop
 from ..protocols import Spawnable, Thread
+from ..runtime.tool_server import CoordinatorToolServer, ToolServerRegistration
 from ..types import (
     CustomEvent,
     InputShape,
@@ -145,6 +157,42 @@ if TYPE_CHECKING:
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
+
+_RUNTIME_SERVER_KEY = "ai_functions_runtime"
+"""Key of the runtime-tools MCP server in the Codex config; tool calls surface
+as ``TOOL_CALL`` events named ``ai_functions_runtime.<tool>``."""
+
+_RUNTIME_TOKEN_ENV = "AI_FUNCTIONS_RUNTIME_TOKEN"
+"""Env var (in the app-server subprocess only) carrying the bearer token."""
+
+
+def _config_with_runtime_tools(config: CodexConfig | None, reg: ToolServerRegistration) -> CodexConfig:
+    """Return a copy of ``config`` pointing Codex at the runtime tool server.
+
+    Adds ``--config`` overrides registering ``reg.url`` as a streamable-HTTP
+    MCP server and routes its bearer token through the subprocess environment
+    (``bearer_token_env_var``), so the secret never appears on the command
+    line. The caller's own overrides and env are preserved.
+
+    Raises:
+        ValueError: ``config.config_overrides`` already configures the
+            reserved ``mcp_servers.ai_functions_runtime`` key.
+    """
+    base = config or CodexConfig()
+    reserved = f"mcp_servers.{_RUNTIME_SERVER_KEY}"
+    if any(override.lstrip().startswith(reserved) for override in base.config_overrides):
+        raise ValueError(
+            f"CodexConfig.config_overrides may not configure the reserved key "
+            f"{reserved!r}; ai_functions uses it for the runtime MCP server.",
+        )
+    overrides = (
+        f'{reserved}.url="{reg.url}"',
+        f'{reserved}.bearer_token_env_var="{_RUNTIME_TOKEN_ENV}"',
+    )
+    env = dict(base.env or {})
+    env[_RUNTIME_TOKEN_ENV] = reg.token
+    return dataclasses.replace(base, config_overrides=(*base.config_overrides, *overrides), env=env)
+
 
 _MAPPED_ITEM_TYPES = frozenset(
     {
@@ -386,6 +434,7 @@ class CodexAgentThread(Thread[[str], str]):
         "_template",
         "_codex",
         "_thread",
+        "_tool_server",
         "_connected",
         "_connect_lock",
         "_active_ctx",
@@ -398,6 +447,9 @@ class CodexAgentThread(Thread[[str], str]):
         self._template: CodexAgent = template
         self._codex: AsyncCodex | None = None
         self._thread: AsyncThread | None = None
+        # Started at connect time so Codex can call the runtime tools over
+        # HTTP MCP; lives exactly as long as the connection.
+        self._tool_server: CoordinatorToolServer | None = None
         self._connected: bool = False
         self._connect_lock: asyncio.Lock = asyncio.Lock()
         # Populated for the duration of each cycle; the dispatcher serialises
@@ -490,7 +542,7 @@ class CodexAgentThread(Thread[[str], str]):
         await ctx.coordinator.wait_until_unpaused(ctx.thread_id)
         self._active_ctx = ctx
         try:
-            await self._ensure_connected()
+            await self._ensure_connected(ctx)
 
             async def _send_turn(combined: str) -> str:
                 return await self._run_turn(ctx, combined)
@@ -530,6 +582,7 @@ class CodexAgentThread(Thread[[str], str]):
 
         Ensures:
             - Any running ``AsyncCodex`` client is closed.
+            - The runtime tool server is stopped and its token revoked.
             - In-flight steers are cancelled and awaited.
             - Pending inject-buffer entries are dropped.
 
@@ -546,12 +599,18 @@ class CodexAgentThread(Thread[[str], str]):
             _ = await asyncio.gather(*steers, return_exceptions=True)
         self._inject_buffer.clear()
         codex = self._codex
+        tool_server = self._tool_server
         self._codex = None
         self._thread = None
+        self._tool_server = None
         self._active_turn = None
         self._connected = False
+        # Close the client (killing the app-server) before stopping the tool
+        # server, so no live Codex process outlasts its tool endpoint.
         if codex is not None:
             await codex.close()
+        if tool_server is not None:
+            await tool_server.stop()
 
     def serialize_result(self, result: str) -> str:
         """Return ``result`` unchanged; Codex results are already strings."""
@@ -578,15 +637,27 @@ class CodexAgentThread(Thread[[str], str]):
 
     # ── Internals ──
 
-    async def _ensure_connected(self) -> None:
-        """Lazily launch the app-server and start (or resume) the thread."""
+    async def _ensure_connected(self, ctx: ThreadContext) -> None:
+        """Lazily launch the app-server and start (or resume) the thread.
+
+        Also starts this thread's :class:`CoordinatorToolServer` and injects
+        its capability URL into the app-server launch config, so the Codex
+        agent can call ``list_threads`` / ``send_message`` over HTTP MCP.
+        """
         if self._connected:
             return
         async with self._connect_lock:
             if self._connected:
                 return
             template = self._template
-            codex = AsyncCodex(config=template.config)
+            tool_server = CoordinatorToolServer()
+            await tool_server.start()
+            try:
+                reg = tool_server.register(ctx.coordinator, ctx.thread_id)
+                codex = AsyncCodex(config=_config_with_runtime_tools(template.config, reg))
+            except BaseException:
+                await tool_server.stop()
+                raise
             try:
                 if template.resume_thread_id is not None:
                     thread = await codex.thread_resume(
@@ -611,9 +682,11 @@ class CodexAgentThread(Thread[[str], str]):
                     )
             except BaseException:
                 await codex.close()
+                await tool_server.stop()
                 raise
             self._codex = codex
             self._thread = thread
+            self._tool_server = tool_server
             self._connected = True
 
     async def _run_turn(self, ctx: ThreadContext, combined: str) -> str:
