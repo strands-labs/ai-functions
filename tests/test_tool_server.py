@@ -140,8 +140,14 @@ async def test_tools_work_with_no_cycle_in_flight(server: CoordinatorToolServer)
     assert '"is_self":true' in text.replace(" ", "")
 
 
+async def test_url_path_is_a_routing_id(server: CoordinatorToolServer) -> None:
+    """The URL path routes to the registration; the token is not part of it."""
+    reg = server.register(_StubCoordinator(), ThreadId("t-alice"))  # pyright: ignore[reportArgumentType]
+    assert reg.token not in reg.url
+
+
 async def test_header_token_is_required(server: CoordinatorToolServer) -> None:
-    """The path token alone is not enough; the bearer header must match it."""
+    """Every request must carry its own registration's token in the header."""
     coord = _StubCoordinator()
     alice = server.register(coord, ThreadId("t-alice"))  # pyright: ignore[reportArgumentType]
     bob = server.register(coord, ThreadId("t-bob"))  # pyright: ignore[reportArgumentType]
@@ -155,11 +161,11 @@ async def test_header_token_is_required(server: CoordinatorToolServer) -> None:
         assert r.status_code == 401
 
 
-async def test_unknown_token_is_not_found(server: CoordinatorToolServer) -> None:
-    """A fabricated path token is rejected before any tool logic runs."""
+async def test_unknown_routing_id_is_not_found(server: CoordinatorToolServer) -> None:
+    """A fabricated path is rejected before any tool logic runs."""
     async with httpx.AsyncClient() as client:
         r = await client.post(
-            f"{server.base_url}/mcp/not-a-real-token",
+            f"{server.base_url}/mcp/not-a-real-id",
             json={},
             headers={"Authorization": "Bearer not-a-real-token"},
         )

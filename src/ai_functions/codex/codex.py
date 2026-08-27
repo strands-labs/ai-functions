@@ -43,15 +43,12 @@ emitted by the runtime dispatcher, never by the thread.
 - ``turn/plan/updated`` / ``item/plan/delta`` / ``PlanThreadItem``:
   ``CustomEvent(kind="codex_plan", payload=...)``.
 - Every other thread item on ``item/completed``:
-  ``CustomEvent(kind=f"codex_item_{item.type}", payload=...)`` — the item union
-  grows with the CLI, so unmapped variants degrade to observability rather than
-  being dropped.
+  ``CustomEvent(kind=f"codex_item_{item.type}", payload=...)``.
 - ``turn/completed``: terminal. ``failed`` raises ``AIFunctionError`` with
   the turn error's message; ``interrupted`` raises
   ``asyncio.CancelledError``; ``completed`` yields the turn result.
 - Every other notification: ``CustomEvent(kind=f"codex_{method}")`` with
-  ``/`` replaced by ``_`` — the registry is large and versions with the CLI,
-  so unknown methods degrade to observability rather than errors.
+  ``/`` replaced by ``_``.
 
 The turn's string result is the last ``final_answer``-phase agent message,
 falling back to the last message with no phase (mirrors the SDK's own
@@ -123,9 +120,6 @@ try:
         UserMessageThreadItem,
         WebSearchThreadItem,
     )
-
-    # The notification types have a curated home in ``openai_codex.models``;
-    # only the thread-item classes and enums must come from the generated module.
     from openai_codex.models import (
         AgentMessageDeltaNotification,
         ErrorNotification,
@@ -170,9 +164,9 @@ def _config_with_runtime_tools(config: CodexConfig | None, reg: ToolServerRegist
     """Return a copy of ``config`` pointing Codex at the runtime tool server.
 
     Adds ``--config`` overrides registering ``reg.url`` as a streamable-HTTP
-    MCP server and routes its bearer token through the subprocess environment
-    (``bearer_token_env_var``), so the secret never appears on the command
-    line. The caller's own overrides and env are preserved.
+    MCP server, and puts its bearer token in the subprocess environment under
+    the name the ``bearer_token_env_var`` override points at. The caller's own
+    overrides and env are preserved.
 
     Raises:
         ValueError: ``config.config_overrides`` already configures the
@@ -589,8 +583,8 @@ class CodexAgentThread(Thread[[str], str]):
         Concurrency:
             Idempotent; tearing down a never-connected thread is a no-op.
         """
-        # Settle the steers before clearing the buffer: a steer failing after
-        # the clear would re-append to it on a torn-down thread.
+        # Settle the steers before clearing the buffer: a failing steer
+        # re-appends to it.
         steers = tuple(self._pending_steers)
         self._pending_steers.clear()
         for task in steers:

@@ -246,17 +246,18 @@ async def test_unknown_notification_becomes_custom_event() -> None:
 
 
 def test_runtime_tools_config_injects_url_and_token() -> None:
-    """The launch config gains the MCP server overrides; the token rides the env."""
-    reg = ToolServerRegistration(url="http://127.0.0.1:1234/mcp/tok", token="tok")
+    """The launch config gains the MCP server overrides; the token rides the env, not them."""
+    reg = ToolServerRegistration(url="http://127.0.0.1:1234/mcp/not-a-real-id", token="not-a-real-token")
     base = CodexConfig(config_overrides=('model="o3"',), env={"KEEP": "1"})
     merged = _config_with_runtime_tools(base, reg)
 
     assert merged.config_overrides == (
         'model="o3"',
-        'mcp_servers.ai_functions_runtime.url="http://127.0.0.1:1234/mcp/tok"',
+        'mcp_servers.ai_functions_runtime.url="http://127.0.0.1:1234/mcp/not-a-real-id"',
         f'mcp_servers.ai_functions_runtime.bearer_token_env_var="{_RUNTIME_TOKEN_ENV}"',
     )
-    assert merged.env == {"KEEP": "1", _RUNTIME_TOKEN_ENV: "tok"}
+    assert merged.env == {"KEEP": "1", _RUNTIME_TOKEN_ENV: "not-a-real-token"}
+    assert not any(reg.token in override for override in merged.config_overrides)
     # The original config is untouched (dataclasses.replace semantics).
     assert base.config_overrides == ('model="o3"',)
     assert base.env == {"KEEP": "1"}
@@ -264,15 +265,15 @@ def test_runtime_tools_config_injects_url_and_token() -> None:
 
 def test_runtime_tools_config_accepts_none() -> None:
     """A template with no config still gets a wired launch config."""
-    reg = ToolServerRegistration(url="http://127.0.0.1:1234/mcp/tok", token="tok")
+    reg = ToolServerRegistration(url="http://127.0.0.1:1234/mcp/not-a-real-id", token="not-a-real-token")
     merged = _config_with_runtime_tools(None, reg)
     assert any(o.startswith("mcp_servers.ai_functions_runtime.url=") for o in merged.config_overrides)
-    assert merged.env == {_RUNTIME_TOKEN_ENV: "tok"}
+    assert merged.env == {_RUNTIME_TOKEN_ENV: "not-a-real-token"}
 
 
 def test_runtime_tools_config_rejects_reserved_key() -> None:
     """User overrides may not squat on the reserved MCP server key."""
-    reg = ToolServerRegistration(url="http://127.0.0.1:1234/mcp/tok", token="tok")
+    reg = ToolServerRegistration(url="http://127.0.0.1:1234/mcp/not-a-real-id", token="not-a-real-token")
     base = CodexConfig(config_overrides=('mcp_servers.ai_functions_runtime.url="http://evil"',))
     with pytest.raises(ValueError, match="reserved"):
         _ = _config_with_runtime_tools(base, reg)

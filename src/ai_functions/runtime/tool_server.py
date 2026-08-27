@@ -9,25 +9,25 @@ the process owning the coordinator.
 Clients must send the token in the ``Authorization: Bearer`` header (Codex:
 ``codex mcp add --url ... --bearer-token-env-var``).
 
-One server per worker. Each thread registers to receive its own capability
-URL::
+One server hosts any number of threads; each registration mints its own
+capability URL::
 
     server = CoordinatorToolServer()
     await server.start()
     reg = server.register(coordinator, thread_id)
-    # reg.url  -> http://127.0.0.1:<port>/mcp/<token>
-    # reg.token, for transports that pass the secret out of band
+    # reg.url   -> http://127.0.0.1:<port>/mcp/<routing-id>
+    # reg.token -> the secret for the Authorization header
     ...
     server.deregister(thread_id)
     await server.stop()
 
 The server binds 127.0.0.1 on a system-assigned port; pass ``reg.url`` to the
 runtime as it starts. The port is reachable by any local process, so the *token*
-is the boundary: each registration mints a ``secrets``-grade token that must
-appear both in the URL path and in the ``Authorization: Bearer`` header
-(constant-time compared), the ``Host`` header must name the bound address
-(DNS-rebinding defense per the MCP spec's guidance for local HTTP servers), and
-deregistration revokes the token immediately.
+is the boundary: each registration mints a ``secrets``-grade token required in
+the ``Authorization: Bearer`` header (constant-time compared), the ``Host``
+header must name the bound address (DNS-rebinding defense per the MCP spec's
+guidance for local HTTP servers), and deregistration revokes the token
+immediately.
 
 The MCP app runs stateless (``stateless_http=True``): tools and one-shot
 reads only — no server-initiated messages, no resource subscriptions.
@@ -85,17 +85,16 @@ class ToolServerRegistration:
     """One thread's capability to call the runtime tools."""
 
     url: str
-    """Full MCP endpoint for this thread, token embedded in the path."""
+    """Full MCP endpoint for this thread."""
 
     token: str
-    """The bare secret, for transports that pass it out of band (e.g. Codex's
-    ``bearer_token_env_var``). Required in the ``Authorization: Bearer`` header
-    on every request."""
+    """The bare secret, required in the ``Authorization: Bearer`` header on
+    every request. Codex takes it via ``bearer_token_env_var``."""
 
 
 @dataclass(frozen=True)
 class _Registration:
-    """Server-side binding of a token to the thread it acts as."""
+    """Server-side binding of a routing id to the thread it acts as."""
 
     coordinator: Coordinator
     thread_id: ThreadId
@@ -187,9 +186,9 @@ class _TokenRouter:
         if not path.startswith(prefix):
             await _plain_response(send, 404, "not found")
             return
-        token, _, rest = path[len(prefix) :].partition("/")
+        path_id, _, rest = path[len(prefix) :].partition("/")
 
-        registration = self._server._lookup(token)  # pyright: ignore[reportPrivateUsage]  # module-internal
+        registration = self._server._lookup(path_id)  # pyright: ignore[reportPrivateUsage]  # module-internal
         if registration is None:
             await _plain_response(send, 404, "not found")
             return
@@ -225,14 +224,15 @@ class _TokenRouter:
 
 @final
 class CoordinatorToolServer:
-    """One streamable-HTTP MCP server hosting the runtime tools for a worker.
+    """A streamable-HTTP MCP server hosting the runtime tools.
 
     Lifecycle:
         constructed → ``start()`` (binds and serves) → ``register`` /
         ``deregister`` per thread → ``stop()``.
 
     Concurrency:
-        ``start``/``stop`` are owned by the hosting worker's event loop.
+        ``start``/``stop`` must run on the same event loop — ``start`` spawns
+        the serving task there and ``stop`` awaits it.
         ``register``/``deregister`` are synchronous dict operations, safe to
         call between requests; per-request identity travels in a context
         variable, so concurrent requests for different threads never observe
@@ -315,7 +315,7 @@ class CoordinatorToolServer:
 
     @property
     def base_url(self) -> str:
-        """Root URL of the running server (no token).
+        """Root URL of the running server (no registration path).
 
         Raises:
             RuntimeError: The server is not started.
@@ -339,8 +339,8 @@ class CoordinatorToolServer:
                 ``continue_then_receive``.
 
         Returns:
-            The registration; hand ``url`` (and, for out-of-band transports,
-            ``token``) to the agent runtime's MCP config.
+            The registration; hand ``url`` and ``token`` to the agent runtime's
+            MCP config.
 
         Raises:
             RuntimeError: The server is not started.
@@ -348,17 +348,18 @@ class CoordinatorToolServer:
         if self._bound_port is None:
             raise RuntimeError("CoordinatorToolServer is not started; call start() first")
         self.deregister(thread_id)
+        path_id = secrets.token_urlsafe(8)
         token = secrets.token_urlsafe(32)
-        self._registrations[token] = _Registration(
+        self._registrations[path_id] = _Registration(
             coordinator=coordinator,
             thread_id=thread_id,
             token=token,
         )
-        self._by_thread[thread_id] = token
-        return ToolServerRegistration(url=f"{self.base_url}/mcp/{token}", token=token)
+        self._by_thread[thread_id] = path_id
+        return ToolServerRegistration(url=f"{self.base_url}/mcp/{path_id}", token=token)
 
     def deregister(self, thread_id: ThreadId) -> None:
-        """Revoke ``thread_id``'s token; later requests with it 404.
+        """Revoke ``thread_id``'s registration; later requests to its URL 404.
 
         A request already dispatched keeps the registration it resolved for the
         rest of its lifetime; revocation is not a cancellation.
@@ -372,9 +373,9 @@ class CoordinatorToolServer:
 
     # ── Internals ──
 
-    def _lookup(self, token: str) -> _Registration | None:
-        """Resolve a path token to its registration; ``None`` when revoked/unknown."""
-        return self._registrations.get(token)
+    def _lookup(self, path_id: str) -> _Registration | None:
+        """Resolve a URL routing id to its registration; ``None`` when revoked/unknown."""
+        return self._registrations.get(path_id)
 
     @staticmethod
     def _bind_socket() -> socket.socket:
