@@ -24,7 +24,7 @@ from typing import Any, cast
 import pytest
 from strands.models import Model
 from strands.types.content import Message, Messages, SystemContentBlock
-from strands.types.exceptions import ContextWindowOverflowException
+from strands.types.exceptions import ContextWindowOverflowException, MaxTokensReachedException
 from strands.types.streaming import StreamEvent
 from strands.types.tools import ToolChoice, ToolSpec
 
@@ -47,6 +47,7 @@ from ai_functions.types.events import (
     MessageAssistantCompleteEvent,
     MessageUserEvent,
     RenderableEvent,
+    TokenUsageEvent,
 )
 from ai_functions.types.ids import MessageId
 
@@ -890,3 +891,75 @@ async def test_no_proactive_summarization_when_threshold_unset() -> None:
         events = await h.worker.coordinator.get_events(handle.id)
         summaries = [e for e in events if isinstance(e, ContextSummarizedEvent)]
         assert len(summaries) == 0  # default is reactive-only: no proactive compaction
+
+
+# ── Token usage is emitted even when a cycle raises before returning ──
+
+_USAGE_METADATA: StreamEvent = cast(
+    StreamEvent,
+    {
+        "metadata": {
+            "usage": {
+                "inputTokens": 200,
+                "outputTokens": 777,
+                "totalTokens": 977,
+                "cacheReadInputTokens": 150,
+                "cacheWriteInputTokens": 50,
+            },
+            "metrics": {"latencyMs": 0},
+        }
+    },
+)
+
+
+class _MaxTokensModel(Model):
+    """Streams a real turn with usage metadata, then stops with ``max_tokens``."""
+
+    def update_config(self, **_config: Any) -> None:  # pyright: ignore[reportExplicitAny, reportAny]
+        pass
+
+    def get_config(self) -> dict[str, object]:
+        return {}
+
+    def stream(self, *args: Any, **kwargs: Any) -> AsyncIterable[StreamEvent]:  # pyright: ignore[reportExplicitAny]
+        del args, kwargs
+
+        async def _stream() -> AsyncIterable[StreamEvent]:
+            yield cast(StreamEvent, {"messageStart": {"role": "assistant"}})
+            yield cast(StreamEvent, {"contentBlockStart": {"start": {}}})
+            yield cast(StreamEvent, {"contentBlockDelta": {"delta": {"text": "thinking..."}}})
+            yield cast(StreamEvent, {"contentBlockStop": {}})
+            yield cast(StreamEvent, {"messageStop": {"stopReason": "max_tokens"}})
+            yield _USAGE_METADATA
+
+        return _stream()
+
+    def structured_output(self, *args: object, **kwargs: object) -> Any:  # pyright: ignore[reportExplicitAny]
+        del args, kwargs
+        raise NotImplementedError
+
+
+def _only_usage_event(events: list[Event]) -> TokenUsageEvent:
+    usage_events = [e for e in events if isinstance(e, TokenUsageEvent)]
+    assert len(usage_events) == 1, f"expected exactly one TokenUsageEvent, got {len(usage_events)}"
+    return usage_events[0]
+
+
+async def test_max_tokens_attempt_emits_token_usage_including_cache() -> None:
+    """A max-tokens-terminated cycle still emits its token usage."""
+
+    @ai_function[str](structured_output=False, model=cast(Any, _MaxTokensModel()))
+    def _ask(q: str) -> str:
+        return q
+
+    async with RuntimeHarness() as h:
+        handle = await h.spawn(_ask)
+        with pytest.raises(MaxTokensReachedException):
+            await handle.run("solve this")
+        events = await h.worker.coordinator.get_events(handle.id)
+
+    usage = _only_usage_event(events).token_usage
+    assert usage.input_tokens == 200
+    assert usage.output_tokens == 777
+    assert usage.cache_read_tokens == 150
+    assert usage.cache_write_tokens == 50

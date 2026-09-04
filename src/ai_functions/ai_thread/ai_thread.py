@@ -512,6 +512,19 @@ class AIThread[**P, T](Thread):  # type: ignore[type-arg]
 
     # ── Internal pipeline steps ──
 
+    def _emit_usage(self, ctx: ThreadContext, usage: dict[str, Any]) -> None:
+        """Emit a ``TokenUsageEvent`` from a Strands usage dict."""
+        ctx.on_event(
+            TokenUsageEvent(
+                token_usage=TokenUsage(
+                    input_tokens=usage.get("inputTokens", 0),
+                    output_tokens=usage.get("outputTokens", 0),
+                    cache_read_tokens=usage.get("cacheReadInputTokens", 0),
+                    cache_write_tokens=usage.get("cacheWriteInputTokens", 0),
+                ),
+            )
+        )
+
     async def _run_cycle(self, ctx: ThreadContext, prompt: str, bound_args: dict[str, object]) -> T:
         """Run the shared agent execution loop for one cycle.
 
@@ -606,20 +619,6 @@ class AIThread[**P, T](Thread):  # type: ignore[type-arg]
                 response = await self._invoke_with_summarization(ctx, attempt_config, resume_messages=decisions)
 
             state: dict[str, object] = response.state or {}
-
-            # Emit token usage before result extraction so a no-result
-            # attempt still accounts for its spend.
-            usage = response.metrics.accumulated_usage
-            ctx.on_event(
-                TokenUsageEvent(
-                    token_usage=TokenUsage(
-                        input_tokens=usage.get("inputTokens", 0),
-                        output_tokens=usage.get("outputTokens", 0),
-                        cache_read_tokens=usage.get("cacheReadInputTokens", 0),
-                        cache_write_tokens=usage.get("cacheWriteInputTokens", 0),
-                    ),
-                )
-            )
 
             try:
                 result = self._extract_result(response, state, plan)
@@ -735,6 +734,9 @@ class AIThread[**P, T](Thread):  # type: ignore[type-arg]
                 # mid-cycle, meaning its own reply could not fit. Propagate
                 # unchanged; summarization would not help.
                 raise
+            finally:
+                # Emit this invoke's token usage on every exit — normal return or exception
+                self._emit_usage(ctx, dict(agent.event_loop_metrics.accumulated_usage or {}))
 
     def _build_agent(
         self,
