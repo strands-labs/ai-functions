@@ -15,7 +15,6 @@ from ai_functions.experimental.economics import (
     BudgetExceeded,
     Candidate,
     CandidatesExhausted,
-    DiminishingReturns,
     EconomicFunction,
     EmpiricalBeliefs,
     PricedModel,
@@ -24,7 +23,6 @@ from ai_functions.experimental.economics import (
     TaskView,
     attempts,
     decisions,
-    economic,
     routed,
     spend,
 )
@@ -321,27 +319,6 @@ class TestForecastCostModel:
         assert costs == sorted(costs)
 
 
-class TestDiminishingReturns:
-    @pytest.mark.asyncio
-    async def test_projection_falls_to_the_worth_in_hand(self):
-        # The estimate is the absolute worth after one more attempt; the
-        # search continues while its reservation price beats the worth in
-        # hand (the sum of booked marginal gains).
-        d = DiminishingReturns(discount=0.6)
-        cands = [Candidate("only", _dummy_fn(), CHEAP_PRICES)]
-        # a healthy gain projects a next worth above the $0.06 in hand
-        h1 = [AttemptRecord(id=RecordId("a"), task=_task(), candidate="only", cost=0.01, reward=0.06, local_score=1.0)]
-        e1 = await d.estimate(_task(), cands, value=0.10, history=h1)
-        assert e1["only"].reservation_price() > 0.06
-        # a zero gain projects no improvement -> reservation price at/below
-        # the worth in hand -> stop
-        h2 = h1 + [
-            AttemptRecord(id=RecordId("b"), task=_task(), candidate="only", cost=0.01, reward=0.0, local_score=0.0)
-        ]
-        e2 = await d.estimate(_task(), cands, value=0.10, history=h2)
-        assert e2["only"].reservation_price() <= 0.06
-
-
 # ══════════════════════════════════════════════════════════════════
 # EconomicFunction — construction guards
 # ══════════════════════════════════════════════════════════════════
@@ -359,26 +336,17 @@ class TestConstruction:
         with pytest.raises(ValueError, match="budget"):
             EconomicFunction(self._cand(), value=0.10, beliefs=EmpiricalBeliefs(), max_tries=None)
 
-    def test_merge_requires_budget(self):
-        with pytest.raises(ValueError, match="budget"):
-            EconomicFunction(self._cand(), value=0.10, beliefs=DiminishingReturns(), merge=lambda a, b: a)
-
-    def test_callable_value_requires_merge(self):
-        with pytest.raises(ValueError, match="callable value requires merge"):
+    def test_callable_value_rejected(self):
+        with pytest.raises(ValueError, match="constant dollar amount"):
             EconomicFunction(self._cand(), value=lambda r: 0.10, beliefs=EmpiricalBeliefs())
 
-    def test_merge_accepts_per_candidate_cap(self):
-        # A per-candidate cap under merge is the classic Pandora setup
-        # (each box opened a bounded number of times), not a conflict.
-        fn = EconomicFunction(
-            self._cand(),
-            value=lambda r: 0.10,
-            beliefs=DiminishingReturns(),
-            merge=lambda a, b: a,
-            budget=0.1,
-            max_tries=3,
-        )
-        assert fn._max_tries == 3
+    def test_nonpositive_value_rejected(self):
+        with pytest.raises(ValueError, match="positive dollars"):
+            EconomicFunction(self._cand(), value=0.0, beliefs=EmpiricalBeliefs())
+
+    def test_score_accepted(self):
+        fn = EconomicFunction(self._cand(), value=0.10, beliefs=EmpiricalBeliefs(), scorer=lambda r: 0.5)
+        assert fn._scorer is not None
 
     def test_mismatched_label_rejected(self):
         cand = {"wrong": Candidate("actual", _dummy_fn(), CHEAP_PRICES)}
@@ -478,53 +446,6 @@ class TestEndToEnd:
             assert [(r.candidate, r.local_score > 0) for r in recs] == [("cheap", False), ("strong", True)]
 
     @pytest.mark.asyncio
-    async def test_carry_context_seeds_and_notifies_escalation(self):
-        # With carry_context=True the escalated attempt is warm-seeded from
-        # the failed one and told about it: the strong model's conversation
-        # opens with the cheap attempt's transcript plus the notify, rather
-        # than starting cold.
-        class RecordingModel(ScriptedModel):
-            def __init__(self, turns):
-                super().__init__(turns)
-                self.seen: list[str] = []
-
-            def stream(self, messages, *args, **kwargs):
-                self.seen = [
-                    block["text"]
-                    for m in messages
-                    for block in m.get("content", [])
-                    if isinstance(block, dict) and "text" in block
-                ]
-                return super().stream(messages, *args, **kwargs)
-
-        async with RuntimeHarness() as h:
-            cheap = ScriptedModel([Turn(text="cheap says no", input_tokens=5, output_tokens=10)])
-            strong = RecordingModel([Turn(text="strong says yes", input_tokens=8, output_tokens=20)])
-            cands = {
-                "cheap": Candidate("cheap", _solve.replace(model=cheap), Prices(input=1.0, output=1.0)),
-                "strong": Candidate("strong", _solve.replace(model=strong), Prices(input=1.0, output=10.0)),
-            }
-            fn = EconomicFunction(
-                cands,
-                value=0.10,
-                beliefs=_fixed_beliefs(),
-                budget=0.25,
-                carry_context=True,
-                policy=ReservationPricePolicy(),
-            )
-            handle = await h.spawn(fn)
-            result = await handle.run(task="t")
-            assert "yes" in result
-
-            seen = "\n".join(strong.seen)
-            assert "cheap says no" in seen  # seeded prior transcript
-            assert "Prior attempt by cheap failed" in seen  # the notify
-
-            # Usage still attributed per attempt, not double-counted from the seed.
-            recs = await attempts(handle)
-            assert [r.usage.output_tokens for r in recs] == [10, 20]
-
-    @pytest.mark.asyncio
     async def test_first_pass_no_escalation(self):
         async with RuntimeHarness() as h:
             cheap = ScriptedModel([Turn(text="cheap says yes", input_tokens=5, output_tokens=10)])
@@ -565,63 +486,22 @@ class TestEndToEnd:
             assert cheap.remaining_turns == 0  # never invoked
 
     @pytest.mark.asyncio
-    async def test_economic_merges_and_books_marginal_rewards(self):
-        # Two passes find overlapping items; merge dedups, rewards are marginal.
-        @ai_function[str](structured_output=False)
-        def _find(src: str) -> str:
-            """{src}"""
-
-        async with RuntimeHarness() as h:
-            model = ScriptedModel(
-                [
-                    Turn(text="a,b", output_tokens=10),
-                    Turn(text="b,c", output_tokens=10),
-                    Turn(text="", output_tokens=10),
-                ]
-            )
-
-            def merge(running: str, new: str) -> str:
-                items = {x.strip() for x in (running + "," + new).split(",") if x.strip()}
-                return ",".join(sorted(items))
-
-            cand = {"m": Candidate("m", _find.replace(model=model), Prices(input=1.0, output=1.0))}
-            # $1 per distinct item; DiminishingReturns projects the next gain,
-            # so the beliefs must be re-consulted after every attempt.
-            fn = EconomicFunction(
-                cand,
-                value=lambda s: 1.0 * len([x for x in s.split(",") if x]),
-                beliefs=DiminishingReturns(),
-                budget=1.0,
-                policy=ReservationPricePolicy(),
-                merge=merge,
-                max_tries=None,
-                reestimate=True,
-            )
-            handle = await h.spawn(fn)
-            result = await handle.run(src="code")
-            # merged result unions all distinct items found before stopping
-            assert set(result.split(",")) <= {"a", "b", "c"}
-            recs = await attempts(handle)
-            # first pass finds a,b -> +$2 marginal; overlaps reduce later gains
-            assert recs[0].reward == pytest.approx(2.0)
-            assert all(r.reward >= 0 for r in recs)
-
-    @pytest.mark.asyncio
-    async def test_keep_best_is_a_merge_with_fixed_estimates(self):
-        # Pandora's box through the merge door: merge keeps the better of
-        # two results, and FIXED estimates (no re-estimation logic in the
-        # beliefs) stop the search on their own — the worth in hand rises
-        # with each improvement until it tops every reservation price.
+    async def test_graded_best_of_n_keeps_highest_score(self):
+        # Independent graded best-of-N: each attempt is scored in [0, 1] and
+        # priced at value; the search keeps the best result by reward and stops
+        # once a draw beats every reservation price. FIXED estimates stop on
+        # their own as the best in hand rises.
         @ai_function[str](structured_output=False)
         def _draft(src: str) -> str:
             """{src}"""
 
         def score(s: str) -> float:
-            return 0.02 * len([x for x in s.split(",") if x])  # $0.02 per item
+            # Fraction of the 5-item target found -> quality in [0, 1].
+            return len([x for x in s.split(",") if x]) / 5.0
 
         async with RuntimeHarness() as h:
-            # Draws of improving quality: 1 item, then 3; a fourth turn
-            # exists but must never run — the bar stops the search first.
+            # Draws of improving quality: 1 item (0.2), then 3 (0.6); a fourth
+            # turn exists but must never run — the bar stops the search first.
             model = ScriptedModel(
                 [
                     Turn(text="a", output_tokens=10),
@@ -629,34 +509,55 @@ class TestEndToEnd:
                     Turn(text="a,b,c,d,e", output_tokens=10),
                 ]
             )
-
-            def keep_better(best: str, new: str) -> str:
-                return new if score(new) > score(best) else best
-
             cand = {"m": Candidate("m", _draft.replace(model=model), Prices(input=1.0, output=1.0))}
-            # Fixed box: a draw ~ N($0.05, $0.01) at $0.005 cost has
-            # reservation price g ~ $0.048 — continue while the best in
-            # hand is below it, stop the moment a draw banks more.
+            # value=$0.10 for a perfect result, so reward = 0.10 * score:
+            # draw 1 banks $0.02, draw 2 banks $0.06. A draw ~ N($0.05, $0.01)
+            # at $0.005 cost has reservation price ~$0.048 — continue while the
+            # best in hand is below it, stop the moment a draw banks more.
             fn = EconomicFunction(
                 cand,
-                value=score,
+                value=0.10,
+                scorer=score,
                 beliefs=Beliefs.fixed({"m": Estimate(Gaussian(mu=0.05, sigma=0.01), 0.005)}),
                 budget=1.0,
                 policy=ReservationPricePolicy(),
-                merge=keep_better,
                 max_tries=None,
             )
             handle = await h.spawn(fn)
             result = await handle.run(src="doc")
 
-            # Ran twice: draw 1 banks $0.02 (< g), draw 2 improves to $0.06
-            # (> g) and the search stops without touching the third turn.
+            # Kept the best result (draw 2), stopped before the third turn.
             assert result.strip() == "a,b,c"
             recs = await attempts(handle)
             assert len(recs) == 2
-            # Marginal booking: $0.02, then the +$0.04 improvement.
+            # reward = value * score: 0.10*0.2, then 0.10*0.6.
             assert recs[0].reward == pytest.approx(0.02)
-            assert recs[1].reward == pytest.approx(0.04)
+            assert recs[1].reward == pytest.approx(0.06)
+            # local_score carries the graded quality now, not just 0/1.
+            assert recs[0].local_score == pytest.approx(0.2)
+            assert recs[1].local_score == pytest.approx(0.6)
+
+    @pytest.mark.asyncio
+    async def test_out_of_range_score_raises_clearly(self):
+        # A score outside [0, 1] must fail clearly at ingestion, not obscurely
+        # later at Bernoulli construction.
+        @ai_function[str](structured_output=False)
+        def _draft(src: str) -> str:
+            """{src}"""
+
+        async with RuntimeHarness() as h:
+            model = ScriptedModel([Turn(text="x", output_tokens=10)])
+            cand = {"m": Candidate("m", _draft.replace(model=model), Prices(input=1.0, output=1.0))}
+            fn = EconomicFunction(
+                cand,
+                value=0.10,
+                scorer=lambda s: 5.0,  # bug: returns a dollar-like amount, not [0, 1]
+                beliefs=EmpiricalBeliefs(),
+                budget=1.0,
+            )
+            handle = await h.spawn(fn)
+            with pytest.raises(ValueError, match=r"score must be in \[0, 1\]"):
+                await handle.run(src="doc")
 
     @pytest.mark.asyncio
     async def test_budget_exceeded_raises_with_records(self):
@@ -746,15 +647,6 @@ class TestDecorators:
 
         assert set(solve.candidates) == {"haiku", "sonnet"}
         assert isinstance(solve.beliefs, EmpiricalBeliefs)
-        assert solve._carry_context is False
-
-    def test_routed_passes_carry_context(self):
-        @routed(models=[PricedModel(model="haiku", prices=CHEAP_PRICES)], value=0.10, carry_context=True)
-        @ai_function[str](structured_output=False)
-        def solve(task: str) -> str:
-            """Solve: {task}"""
-
-        assert solve._carry_context is True
 
     def test_routed_rejects_both_sources(self):
         with pytest.raises(ValueError, match="exactly one"):
@@ -765,7 +657,7 @@ class TestDecorators:
                 """{task}"""
 
     def test_routed_rejects_callable_value(self):
-        with pytest.raises(ValueError, match="constant dollar value"):
+        with pytest.raises(ValueError, match="constant dollar amount"):
 
             @routed(models=[PricedModel(model="m", prices=CHEAP_PRICES)], value=lambda r: 0.10)  # type: ignore[arg-type]
             @ai_function[str](structured_output=False)
@@ -780,81 +672,33 @@ class TestDecorators:
             def solve(task: str) -> str:
                 """{task}"""
 
-    def test_economic_single_candidate_and_defaults(self):
-        @economic(
-            models=[PricedModel(model="haiku", prices=CHEAP_PRICES)],
-            value=lambda r: 0.02,
-            merge=lambda a, b: a,
-            budget=0.1,
-        )
+    def test_routed_default_policy_is_reservation_price(self):
+        @routed(models=[PricedModel(model="haiku", prices=CHEAP_PRICES)], value=0.10)
+        @ai_function[str](structured_output=False)
+        def solve(task: str) -> str:
+            """{task}"""
+
+        assert isinstance(solve._policy, ReservationPricePolicy)
+
+    def test_routed_passes_score(self):
+        def grade(r: str) -> float:
+            return 0.5
+
+        @routed(models=[PricedModel(model="haiku", prices=CHEAP_PRICES)], value=0.10, scorer=grade)
+        @ai_function[str](structured_output=False)
+        def solve(task: str) -> str:
+            """{task}"""
+
+        assert solve._scorer is grade
+
+    def test_routed_defaults_beliefs_to_empirical(self):
+        @routed(models=[PricedModel(model="haiku", prices=CHEAP_PRICES)], value=0.10)
         @ai_function[str](structured_output=False)
         def review(src: str) -> str:
             """{src}"""
 
         assert set(review.candidates) == {"haiku"}
-        assert isinstance(review.beliefs, DiminishingReturns)
-
-    def test_economic_defaults_merge_to_keep_best(self):
-        # No merge given: the fold defaults to keep_best over value — the
-        # higher-worth result displaces, ties keep the incumbent.
-        @economic(
-            models=[PricedModel(model="haiku", prices=CHEAP_PRICES)],
-            value=lambda r: float(len(r)),
-            budget=0.1,
-        )
-        @ai_function[str](structured_output=False)
-        def draft(src: str) -> str:
-            """{src}"""
-
-        fold = draft._merge
-        assert fold is not None
-        assert fold("aa", "bbb") == "bbb"  # higher worth displaces
-        assert fold("aa", "b") == "aa"  # lower keeps the incumbent
-        assert fold("aa", "cc") == "aa"  # ties keep the incumbent (strict >)
-
-    def test_economic_rejects_nonpositive_budget(self):
-        with pytest.raises(ValueError, match="positive budget"):
-
-            @economic(
-                models=[PricedModel(model="m", prices=CHEAP_PRICES)],
-                value=lambda r: 1.0,
-                merge=lambda a, b: a,
-                budget=0.0,
-            )
-            @ai_function[str](structured_output=False)
-            def review(src: str) -> str:
-                """{src}"""
-
-    def test_economic_rejects_constant_value(self):
-        # A constant under merge books its full value once and $0 forever
-        # after, silently stopping the search after one pass.
-        with pytest.raises(ValueError, match="callable value"):
-
-            @economic(
-                models=[PricedModel(model="m", prices=CHEAP_PRICES)],
-                value=0.02,  # type: ignore[arg-type]
-                merge=lambda a, b: a,
-                budget=0.1,
-            )
-            @ai_function[str](structured_output=False)
-            def review(src: str) -> str:
-                """{src}"""
-
-    def test_economic_rejects_fixed_scale_beliefs(self):
-        # EmpiricalBeliefs prices answer correctness at a constant value,
-        # which a callable value does not have — reject at decoration time.
-        with pytest.raises(ValueError, match="not currently compatible"):
-
-            @economic(
-                models=[PricedModel(model="m", prices=CHEAP_PRICES)],
-                value=lambda r: 1.0,
-                merge=lambda a, b: a,
-                budget=0.1,
-                beliefs=EmpiricalBeliefs(),
-            )
-            @ai_function[str](structured_output=False)
-            def review(src: str) -> str:
-                """{src}"""
+        assert isinstance(review.beliefs, EmpiricalBeliefs)
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -941,9 +785,7 @@ class TestBackwardWiring:
             description="score settles the routing decision",
             meta={"results": {"r1": "cheap"}},
         )
-        child = ThreadNode(
-            node_id="research-1", thread_id="research-1", value="some sources", parameters=[decision]
-        )
+        child = ThreadNode(node_id="research-1", thread_id="research-1", value="some sources", parameters=[decision])
         root = ThreadNode(node_id="write-1", thread_id="write-1", value="the report", child_threads=[child])
 
         # Stubbed backward: at the root, score + text the economic child; at the

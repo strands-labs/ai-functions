@@ -29,7 +29,7 @@ from ai_functions.experimental.economics import (
     TaskView,
     routed,
 )
-from ai_functions.experimental.economics.search import Bernoulli, Estimate
+from ai_functions.experimental.economics.search import Bernoulli, Estimate, Greedy
 
 VALUE = 0.05  # a verified solution is worth 5 cents
 
@@ -62,9 +62,11 @@ class Assignment(BaseModel):
     values: list[bool] = Field(description="values[i] is the truth value of variable x(i+1)")
 
 
-# The default Greedy policy ranks by net value (E[reward] - cost): the pick is
-# whichever candidate the custom beliefs say is most profitable for this task.
-@routed(models=[HAIKU, SONNET], value=VALUE, beliefs=RatioBeliefs())
+# Greedy ranks by net value (E[reward] - cost): the pick is whichever candidate
+# the custom beliefs say is most profitable for this task, and it stops once a
+# result is in hand — the right rule for one-shot routing (the decorator's
+# default is ReservationPricePolicy, which prices in fallback options).
+@routed(models=[HAIKU, SONNET], value=VALUE, beliefs=RatioBeliefs(), policy=Greedy())
 @ai_function[Assignment](post_conditions=[check_sat])
 def solve(clauses: str, n_vars: int):
     """Find a satisfying assignment for this 3-SAT formula over variables x1..x{n_vars}.

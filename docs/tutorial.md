@@ -1109,9 +1109,10 @@ def travel_assistant(request: str) -> str:
 Post-conditions give an AI Function correctness semantics; the `ai_functions.experimental.economics` module adds the economics: what a result is worth in dollars, what each candidate model's tokens cost, and therefore which model to try, whether to switch after a failure, and when to stop. One rule governs every attempt: **an attempt is worth making only when it's expected to yield more than it costs**.
 
 ```python
+from ai_functions import ai_function
 from ai_functions.experimental.economics import PricedModel, Prices, routed
 
-# The candidate models, priced at what *you* pay (dollars per million tokens).
+# The candidate models, priced at what you pay (dollars per million tokens).
 HAIKU = PricedModel(model="global.anthropic.claude-haiku-4-5-20251001-v1:0",
                     prices=Prices(input=1.00, output=5.00))
 SONNET = PricedModel(model="global.anthropic.claude-sonnet-4-6",
@@ -1130,7 +1131,7 @@ def solve(clauses: str, n_vars: int) -> Assignment:
 result = await solve(clauses=clauses, n_vars=8)   # called like any AI Function
 ```
 
-`@routed` stacks on an ordinary `@ai_function`, routing each call across several models. Three pieces define the economics: `value` is what a verified success is worth in dollars; `models` are the candidates, each pairing a model with its token prices; and the post-conditions define success. Each call starts from per-candidate estimates (the chance of passing and expected cost), tries the most profitable candidate, returns its result if it passes, switches if it fails, and abstains when no candidate is worth its cost.
+`@routed` stacks on an ordinary `@ai_function`, routing each call across several models. `value` is what a verified success is worth in dollars; `models` are the candidates, each pairing a model with its token prices; and the post-conditions define success. Each call starts from per-candidate estimates (the chance of passing and expected cost), tries the most profitable candidate, returns its result if it passes, switches if it fails, and abstains when no candidate is worth its cost.
 
 See the [economics documentation](economics.md) for more details, including alternative search policies, estimation via learned/custom beliefs, and adaptive stopping on graded tasks. Note: the module is experimental — the API may change in future releases.
 

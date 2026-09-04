@@ -48,7 +48,7 @@ from ai_functions.ai_thread.errors import AIFunctionError
 from ai_functions.memory.frozen import Frozen
 from ai_functions.types import TokenUsage
 
-from .search import Bernoulli, Estimate, Gaussian
+from .search import Bernoulli, Estimate
 from .types import AttemptRecord, RecordId, TaskView
 
 if TYPE_CHECKING:
@@ -62,6 +62,15 @@ logger = logging.getLogger(__name__)
 # Only used to seed the cost estimate; replaced by the observed mean once the
 # candidate has run at least once.
 _COST_PRIOR_OUTPUT_TOKENS = 500
+
+
+def _check_score(score: float, candidate: str) -> None:
+    """Raise if ``score`` is outside ``[0, 1]`` — the range the Beta posterior needs."""
+    if not 0.0 <= score <= 1.0:
+        raise ValueError(
+            f"score must be in [0, 1], got {score} for candidate {candidate!r}; "
+            "return a normalized score (e.g. F1), not a dollar amount"
+        )
 
 
 class Beliefs(ABC):
@@ -351,18 +360,13 @@ class EmpiricalBeliefs(Beliefs):
     ) -> dict[str, Estimate]:
         """Return each candidate's posterior mean as a Bernoulli at ``value``.
 
-        Raises:
-            AIFunctionError: ``value`` is ``None`` — this provider prices
-                passes at the constant value scale, which a merged search
-                does not have.
+        The Bernoulli value carries the reward scale (``value``); the posterior
+        mean ``p`` is the expected score in ``[0, 1]``, so the expected reward
+        is ``value * p``.
         """
         del task, history
         if value is None:
-            raise AIFunctionError(
-                "EmpiricalBeliefs prices passes at the constant value scale; under merge no "
-                "constant scale exists — use it with @routed, or a history-driven provider "
-                "(e.g. DiminishingReturns) here"
-            )
+            raise AIFunctionError("EmpiricalBeliefs requires a constant value scale (dollars a pass is worth)")
         out: dict[str, Estimate] = {}
         for c in candidates:
             alpha, beta, mean_cost = self._posterior(c.label)
@@ -395,8 +399,15 @@ class EmpiricalBeliefs(Beliefs):
         return t_num / w_sum, o_num / w_sum
 
     def update(self, record: AttemptRecord) -> None:
-        """Fold a record's score, cost, and turn shape into its candidate's posterior."""
+        """Fold a record's score, cost, and turn shape into its candidate's posterior.
+
+        The score must be in ``[0, 1]`` — the Beta posterior folds ``score`` into
+        ``alpha`` and ``1 - score`` into ``beta``, which is only coherent on that
+        range. Validated here so an out-of-range score fails clearly rather than
+        later at ``Bernoulli`` construction.
+        """
         score = record.settled_score if record.settled_score is not None else record.local_score
+        _check_score(score, record.candidate)
         self._contribs[record.id] = _Contribution(
             label=record.candidate,
             score=score,
@@ -412,6 +423,7 @@ class EmpiricalBeliefs(Beliefs):
         if contrib is None:
             logger.debug("settle: no contribution for record %s; ignoring", record_id)
             return
+        _check_score(score, contrib.label)
         contrib.score = score
         self._persist_stats()
 
@@ -437,87 +449,6 @@ class EmpiricalBeliefs(Beliefs):
                 mean_turns, mean_out_per_turn = turn_stats
                 turn_str = f", avg {mean_turns:.1f} turns at {mean_out_per_turn:.0f} output tokens/turn"
             out[label] = f"{p:.0%} pass over {n} attempts{cost_str}{turn_str}"
-        return out
-
-
-# ── DiminishingReturns ────────────────────────────────────────────
-
-
-class DiminishingReturns(Beliefs):
-    """Projects the worth after one more attempt from the current search's history.
-
-    The default provider under ``@economic``. Booked rewards are marginal
-    gains, so the worth in hand is their sum; the next attempt is projected
-    to add ``discount`` times the last observed gain. The estimate is the
-    *absolute* worth after that attempt — the form the stopping rule
-    compares against the worth in hand — not the marginal gain alone.
-    Task-local: it reads only the ``history`` passed to ``estimate`` and
-    keeps no cross-task state.
-
-    This is a heuristic projection, not a result of the search theory: the
-    geometric-decay assumption is what makes the myopic stopping rule safe
-    (if gains truly diminish, the first unprofitable attempt implies all
-    later ones are too), and the defaults are sensible starting points, not
-    fitted constants. Replace with a task-specific ``Beliefs`` when the
-    workload justifies it.
-
-    Args:
-        discount: Fraction of the last marginal gain expected from the next
-            attempt, in ``(0, 1]``.
-        prior_gain: Expected dollar gain of the first attempt, before any
-            evidence; defaults to twice the mean observed attempt cost.
-
-    Raises:
-        ValueError: ``discount`` outside ``(0, 1]``.
-    """
-
-    def __init__(self, discount: float = 0.6, prior_gain: float | None = None) -> None:
-        if not 0.0 < discount <= 1.0:
-            raise ValueError(f"discount must be in (0, 1], got {discount}")
-        self._discount = discount
-        self._prior_gain = prior_gain
-
-    async def estimate(
-        self, task: TaskView, candidates: list[Candidate], value: float | None, history: list[AttemptRecord]
-    ) -> dict[str, Estimate]:
-        """Project the worth in hand plus the next marginal gain (all candidates share it).
-
-        ``value`` is unread: the projection is in dollars directly, from the
-        booked history — no constant scale is needed.
-        """
-        del task, value
-        banked = sum(r.reward for r in history)  # marginals telescope to the worth in hand
-        costs = [r.cost for r in history]
-        avg_cost = sum(costs) / len(costs) if costs else None
-
-        if history:
-            projected = self._discount * history[-1].reward
-        elif self._prior_gain is not None:
-            projected = self._prior_gain
-        else:
-            # No evidence and no explicit prior: seed from the cost scale so
-            # the first attempt clears its own cost and the search starts.
-            seed_cost = (
-                avg_cost
-                if avg_cost is not None
-                else candidates[0].prices.cost_of(TokenUsage(output_tokens=_COST_PRIOR_OUTPUT_TOKENS))
-            )
-            projected = 2.0 * seed_cost
-
-        # A small spread (25% of the projected gain) keeps the reservation
-        # price above the mean: there's a chance the next draw beats the
-        # projection. When the projected gain reaches zero the spread
-        # collapses too and the search stops.
-        sigma = max(projected * 0.25, 1e-9)
-
-        out: dict[str, Estimate] = {}
-        for c in candidates:
-            cost = (
-                avg_cost
-                if avg_cost is not None
-                else c.prices.cost_of(TokenUsage(output_tokens=_COST_PRIOR_OUTPUT_TOKENS))
-            )
-            out[c.label] = Estimate(dist=Gaussian(mu=banked + projected, sigma=sigma), cost=cost)
         return out
 
 
@@ -589,16 +520,11 @@ class LLMForecaster(Beliefs):
 
         Raises:
             AIFunctionError: ``value`` is ``None`` — the forecast is a pass
-                probability, priced at the constant value scale, which a
-                merged search does not have. Checked before the forecast
-                call so no tokens are spent on an unusable estimate.
+                probability priced at the constant value scale. Checked before
+                the forecast call so no tokens are spent on an unusable estimate.
         """
         if value is None:
-            raise AIFunctionError(
-                "LLMForecaster forecasts pass probabilities priced at the constant value scale; "
-                "under merge no constant scale exists — use it with @routed, or a history-driven "
-                "provider (e.g. DiminishingReturns) here"
-            )
+            raise AIFunctionError("LLMForecaster requires a constant value scale (dollars a pass is worth)")
         stats = self._base.stats()
         notes = await self._recall_notes()
 

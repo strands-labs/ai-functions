@@ -212,7 +212,7 @@ implementation, and every `WorkerAdapter` shim.
 
 # Economics invariants (E-series)
 
-Invariants of the `ai_functions.economics` module. Same contract as
+Invariants of the `ai_functions.experimental.economics` module. Same contract as
 above, scoped to the economics layer; each is also stated inline in
 the docstring of the module that enforces it.
 
@@ -233,10 +233,10 @@ Classes that must agree: `Prices`, every `Beliefs` implementation,
 ## E2 — Attempt records are revisable
 
 An `AttemptRecord` is booked provisionally: `local_score` is booked
-at run time from the candidate's own post-conditions, and
-`settled_score` may later overwrite its meaning when downstream
-feedback arrives. Consumers must treat `settled_score` as
-authoritative when present. Learners store per-record contributions
+at run time from the candidate's own post-conditions (or a `score`
+grader's `[0, 1]` value, when given). A `settled_score` is written
+when downstream feedback arrives; consumers must treat `settled_score`
+as authoritative when present. Learners store per-record contributions
 (or sufficient statistics keyed by record id) such that `settle`
 replaces a record's effect rather than double-counting it. Violating
 this corrupts learned state on settlement, and repeated backward
@@ -268,15 +268,13 @@ Classes that must agree: every `Beliefs` implementation and
 `EconomicThread._estimate` (which enforces it after every estimation
 round).
 
-## E5 — Never knowingly spend more than expected reward
+## E5 — Never knowingly spend more than the expected yield
 
-When no candidate has positive net value at decision time, the
-economic function abstains rather than running the least-bad one
-(`Abstained`, or `Decision.candidate is None` from `plan()`). The
-same floor applies at every round: escalation stops when the best
-remaining candidate is no longer worth its cost. Violating this
-means a router that cannot say "not worth it" silently overpays on
-hopeless tasks.
+An attempt is worth making only when it is expected to yield more than it costs.
+When no candidate is worth trying at the start, the economic function abstains
+rather than running the least-bad candidate (`Abstained`, or
+`Decision.candidate is None` from `plan()`). At every later round the same
+condition stops the search, keeping the best result so far.
 
 Classes that must agree: every value-ranking `Policy`
 (`ReservationPricePolicy`, `Greedy`), `EconomicThread.execute`

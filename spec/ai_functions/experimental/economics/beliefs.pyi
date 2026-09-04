@@ -210,37 +210,6 @@ class EmpiricalBeliefs(Beliefs):
     ) -> None: ...
 
 
-class DiminishingReturns(Beliefs):
-    """Projects the worth after one more attempt from the current search's history.
-
-    The default provider under ``@economic``. Booked rewards are marginal
-    gains, so the worth in hand is their sum; the next attempt is projected
-    to add ``discount`` times the last observed gain. The estimate is the
-    *absolute* worth after that attempt — the form the stopping rule
-    compares against the worth in hand — not the marginal gain alone.
-    Task-local: it reads only the ``history`` passed to ``estimate`` and
-    keeps no cross-task state.
-
-    This is a heuristic projection, not a result of the search theory: the
-    geometric-decay assumption is what makes the myopic stopping rule safe
-    (if gains truly diminish, the first unprofitable attempt implies all
-    later ones are too), and the defaults are sensible starting points, not
-    fitted constants. Replace with a task-specific ``Beliefs`` when the
-    workload justifies it.
-
-    Args:
-        discount: Fraction of the last marginal gain expected from the next
-            attempt, in ``(0, 1]``.
-        prior_gain: Expected dollar gain of the first attempt, before any
-            evidence; defaults to twice the mean observed attempt cost.
-
-    Raises:
-        ValueError: ``discount`` outside ``(0, 1]``.
-    """
-
-    def __init__(self, discount: float = 0.6, prior_gain: float | None = None) -> None: ...
-
-
 class LLMForecaster(Beliefs):
     """Task-dependent beliefs: an LLM adjusts a numeric base rate per task.
 

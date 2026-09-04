@@ -6,11 +6,12 @@ model to route to, when to escalate to a fallback, and when to stop.
 Everything is denominated in dollars (E1), so the stopping rule is one
 sentence: stop when no remaining attempt is expected to pay for itself.
 
-Two decorators are the entry points — ``@routed`` decides *which* candidate
-attempts a task (model routing, cascade/fallback, abstention), ``@economic``
-decides *how many times* one candidate should try (repeated sampling with
-automatic stopping). Both construct an :class:`EconomicFunction`, which
-mirrors the calling surface of ``AIFunction`` and adds ``plan()``.
+``@routed`` is the entry point: it routes each call across a set of priced
+models over *independent* attempts, samples while another attempt is expected
+to pay for itself, and keeps the best result by score (the post-condition
+pass/fail by default, or a caller-supplied ``[0, 1]`` grader). It constructs an
+:class:`EconomicFunction`, which mirrors the calling surface of ``AIFunction``
+and adds ``plan()``.
 
 The top level exports the decorator path. The pure search core —
 :class:`~ai_functions.experimental.economics.search.Search`,
@@ -23,22 +24,21 @@ from __future__ import annotations
 
 from .beliefs import (
     Beliefs,
-    DiminishingReturns,
     EmpiricalBeliefs,
     LLMForecaster,
     ObservedAttempt,
     RoutingMemory,
 )
-from .decorators import economic, routed
+from .decorators import routed
 from .function import (
     ATTEMPT_EVENT,
     DECISION_EVENT,
     Decision,
     EconomicFunction,
+    Scorer,
     Value,
     attempts,
     decisions,
-    keep_best,
     spend,
 )
 from .types import (
@@ -65,7 +65,6 @@ __all__ = [
     "CandidatesExhausted",
     "DECISION_EVENT",
     "Decision",
-    "DiminishingReturns",
     "EconomicFunction",
     "EconomicsError",
     "EmpiricalBeliefs",
@@ -76,12 +75,11 @@ __all__ = [
     "Ranking",
     "RecordId",
     "RoutingMemory",
+    "Scorer",
     "TaskView",
     "Value",
     "attempts",
     "decisions",
-    "economic",
-    "keep_best",
     "routed",
     "spend",
 ]

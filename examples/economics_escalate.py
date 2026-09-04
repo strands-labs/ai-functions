@@ -1,11 +1,10 @@
-"""Pay only for the model the task needs — one decorator, one number.
+"""Cost-aware model routing with escalation — one decorator, one value for what success is worth.
 
 ``@routed`` turns an ``@ai_function`` into an economic function over several
 models. The one required number is ``value``: what a verified success is
-worth, in dollars. Given that, each call tries the candidate whose expected
-profit is highest (the cheap model, at first), escalates when the verifier
-rejects its answer, stops when no attempt is worth its cost — and learns
-from every call, so routing sharpens as the batch progresses.
+worth, in dollars. Given that, each call tries the candidate whose *reservation
+index* is highest (here, the cheap model at first), escalates when the verifier
+rejects the answer, and stops when no attempt is worth its cost.
 
 A batch of 3-SAT instances — mostly easy, one hard (see ``_economics_utils.py``
 for the difficulty knob) — against a straight-to-strong baseline shows the
@@ -55,8 +54,7 @@ def solve(clauses: str, n_vars: int):
 
 
 # Baseline for comparison: same function, strong model only, with its OWN
-# fresh beliefs (replace(beliefs=...) — sharing solve's would let one run's
-# learning leak into the other and skew the comparison).
+# fresh beliefs (replace() would otherwise share solve's).
 solve_strong = solve.replace(
     candidates={"sonnet": solve.candidates["sonnet"]},
     beliefs=EmpiricalBeliefs(),
@@ -87,7 +85,7 @@ async def run_batch(label: str, solver) -> tuple[list[str], float]:
 async def main():
     logging.basicConfig(level=logging.WARNING)
 
-    rule("Escalate only when the cheap arm fails")
+    rule("Routing with escalation vs. straight to sonnet")
 
     routed_rows, routed_total = await run_batch("routed (haiku → sonnet)", solve)
     baseline_rows, baseline_total = await run_batch("baseline (straight to sonnet)", solve_strong)

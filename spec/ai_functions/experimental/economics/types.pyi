@@ -10,9 +10,10 @@ Invariants:
     (scores, token counts, probabilities) must convert at its own boundary.
 
     E2 — an ``AttemptRecord`` is revisable: ``local_score`` is booked at run
-    time from the candidate's own post-conditions, and ``settled_score`` may
-    later overwrite its meaning when downstream feedback arrives. Consumers
-    must treat ``settled_score`` as authoritative when present.
+    time from the candidate's own post-conditions (or a ``scorer``'s
+    ``[0, 1]`` value, when given). A ``settled_score`` is written when
+    downstream feedback arrives; consumers must treat ``settled_score`` as
+    authoritative when present.
 """
 
 from __future__ import annotations
@@ -171,9 +172,10 @@ class AttemptRecord(BaseModel):
     (the *marginal* gain of the merged result under ``@economic``), 0.0 on
     fail."""
     local_score: float
-    """Whether the candidate's own post-conditions accepted the result:
-    1.0 for a pass, 0.0 for a fail. Graded quality arrives later via
-    ``settled_score`` (E2)."""
+    """The attempt's score in ``[0, 1]``, booked at run time: the
+    post-condition pass/fail (``1.0``/``0.0``) by default, or a caller
+    ``scorer``'s value. A ``settled_score``, written from downstream
+    feedback, is authoritative when present (E2)."""
     settled_score: float | None = None
     """Downstream-corrected score in ``[0, 1]``, written by settlement.
     ``None`` until feedback reaches this record. Authoritative when present."""

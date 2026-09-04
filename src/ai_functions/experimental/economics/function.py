@@ -1,8 +1,7 @@
 """EconomicFunction: an AI function with candidates, a value, and a budget.
 
-The class both decorators (:func:`~.decorators.routed`,
-:func:`~.decorators.economic`) construct. It owns the standing configuration
-— candidates, beliefs, value, budget, policy — and mirrors the calling
+The class :func:`~.decorators.routed` constructs. It owns the standing
+configuration — candidates, beliefs, value, budget, policy — and mirrors the calling
 surface of ``AIFunction``: ``await fn(...)``, ``run_sync``, ``trace``,
 ``spawn``, plus ``plan()`` — decide without executing. One call runs one
 search: estimate the candidates, loop :class:`~.search.Search`, spawn each
@@ -86,35 +85,18 @@ _DECISION_SCORE_NOTE = (
 )
 
 
-Value = float | Callable[[Any], float]
-"""Dollar worth of a passing result. The two arms belong to the two doors:
-a constant under ``@routed`` (a pass books the full value), a callable
-under ``@economic`` (it prices the *merged* total; the search books the
-differences, so each attempt's reward is its marginal gain)."""
+Value = float
+"""Dollar worth of a fully-successful result — a positive constant. An
+attempt's reward is ``value * score``, where ``score`` is in ``[0, 1]``: the
+post-condition pass/fail by default, or a caller-supplied ``scorer``. So a
+perfect result books the full ``value``, a partial one books proportionally
+less, and a failure books ``0``."""
 
-
-def _value_of(value: Value, result: Any) -> float:
-    """Dollar worth of ``result`` under ``value``."""
-    return value(result) if callable(value) else float(value)
-
-
-def keep_best[T](value: Callable[[T], float]) -> Callable[[T, T], T]:
-    """The keep-the-best fold, ``@economic``'s default merge.
-
-    A new result replaces the incumbent only by scoring strictly higher
-    under ``value``.
-
-    Args:
-        value: The same dollar-worth function passed to the decorator.
-
-    Returns:
-        A ``(best, new) -> best`` merge function.
-    """
-
-    def _keep(best: T, new: T) -> T:
-        return new if value(new) > value(best) else best
-
-    return _keep
+Scorer = Callable[[Any], float]
+"""Score of a passing result, in ``[0, 1]``. Defaults to the post-condition
+pass/fail (``1.0``/``0.0``); a caller may supply a grader (e.g. an F1 score)
+to reward partial success. An out-of-range score raises rather than silently
+corrupting the beliefs."""
 
 
 # ── Decision (plan output) ────────────────────────────────────────
@@ -176,10 +158,8 @@ class EconomicThread[**P, T]:
     Produced by ``EconomicFunction.to_thread``. Satisfies the ``Thread``
     protocol; ``execute`` receives the call arguments directly and manages
     estimation, attempt spawning, booking, and stopping internally. Each
-    attempt is a separate child thread, warm-seeded from the prior attempt
-    when ``carry_context`` is set. Per-attempt usage is measured from the
-    attempt's event log against a post-spawn baseline, so warm-seeded copies
-    of earlier usage events are not double-counted.
+    attempt is a separate, independent child thread. Per-attempt usage is
+    measured from the attempt's event log against a post-spawn baseline.
     """
 
     def __init__(self, fn: EconomicFunction[P, T]) -> None:
@@ -194,8 +174,6 @@ class EconomicThread[**P, T]:
         self,
         ctx: ThreadContext,
         candidate: Candidate[P, T],
-        seed_from: Any,
-        notify_text: str | None,
         args: tuple[Any, ...],
         kwargs: dict[str, Any],
     ) -> tuple[ThreadHandle[P, T], Any, bool, TokenUsage, int]:
@@ -205,14 +183,10 @@ class EconomicThread[**P, T]:
         # retries: the search owns all retry logic.
         handle = await ctx.coordinator.spawn(
             candidate.fn.replace(max_attempts=0),
-            seed_from=seed_from,
             worker_id=info.worker_id,
             parent_id=ctx.thread_id,
         )
         baseline = await last_event_id(ctx.coordinator, handle.id)
-
-        if notify_text is not None:
-            await handle.notify(notify_text)
 
         passed = False
         result: Any = None
@@ -238,8 +212,9 @@ class EconomicThread[**P, T]:
         """Run the full search loop for one task.
 
         Returns:
-            The typed result of the highest-reward passing attempt (the
-            merged result under ``merge``).
+            The result of the highest-scoring passing attempt. Attempts are
+            independent; the search samples while another is expected to pay
+            for itself and keeps the best result by ``score``.
 
         Raises:
             Abstained: No candidate had positive net value at decision time (E5).
@@ -255,58 +230,34 @@ class EconomicThread[**P, T]:
         attempt_ids: list[str] = []  # parallel to records: thread id that ran each
         decision_rounds: list[dict[str, Any]] = []  # one payload per estimation round
         by_label = fn._candidates
-        merged: Any = None  # running result under merge
-        last_attempt_id: Any = None
+        best_result: Any = None  # highest-scoring passing result seen so far
+        best_reward: float = -1.0  # its reward (value * score); -1 = nothing kept yet
         record_seq = 0
 
-        # Estimate once up front to seed the search; re-estimate in-loop when
-        # configured (the @economic door turns it on, since its beliefs
-        # project the next gain from the attempts observed so far).
+        # Estimate once up front to seed the search. Attempts are independent,
+        # so the per-candidate estimates do not change within a call.
         estimates = await self._estimate(fn, task, candidates, records)
         search = Search(estimates, budget=fn._budget, policy=fn._policy, max_tries=fn._max_tries)
         self._emit_decision(ctx, search, records, estimates, decision_rounds)
 
         attempt_handles: list[ThreadHandle[P, T]] = []
         try:
-            first = True
             while True:
-                if not first and fn._reestimate:
-                    estimates = await self._estimate(fn, task, candidates, records)
-                    search.update_estimates(estimates)
-                    self._emit_decision(ctx, search, records, estimates, decision_rounds)
-                first = False
-
                 label = search.next()
                 if label is None:
                     break
                 candidate = by_label[label]
 
-                # Warm-seed and announce prior outcome only when carrying context.
-                seed_from = last_attempt_id if fn._carry_context else None
-                notify_text: str | None = None
-                if fn._carry_context and records:
-                    prior = records[-1]
-                    status = "passed" if prior.local_score > 0 else "failed"
-                    notify_text = f"[Prior attempt by {prior.candidate} {status}. Continue from there.]"
-
-                handle, result, passed, usage, turns = await self._run_attempt(
-                    ctx, candidate, seed_from, notify_text, args, kwargs
-                )
+                handle, result, passed, usage, turns = await self._run_attempt(ctx, candidate, args, kwargs)
                 attempt_handles.append(handle)
-                last_attempt_id = handle.id
                 cost = candidate.prices.cost_of(usage)
 
-                # Reward: dollars this attempt added. Under merge, fold into the
-                # running result and book the marginal gain; otherwise the raw
-                # result's value.
-                if passed and fn._merge is not None:
-                    prev_value = _value_of(fn._value, merged) if merged is not None else 0.0
-                    merged = result if merged is None else fn._merge(merged, result)
-                    reward = _value_of(fn._value, merged) - prev_value
-                elif passed:
-                    reward = _value_of(fn._value, result)
-                else:
-                    reward = 0.0
+                # Score the attempt in [0, 1] (post-condition pass/fail
+                # by default, or a caller grader), validate the range, and price
+                # it at the constant value: reward = value * score. A failed
+                # attempt scores 0.
+                score = self._score_of(fn, result) if passed else 0.0
+                reward = fn._value * score
 
                 record = AttemptRecord(
                     id=RecordId(f"{ctx.thread_id}-{record_seq}"),
@@ -316,7 +267,7 @@ class EconomicThread[**P, T]:
                     usage=usage,
                     turns=turns,
                     reward=reward,
-                    local_score=1.0 if passed else 0.0,
+                    local_score=score,
                 )
                 record_seq += 1
                 records.append(record)
@@ -324,26 +275,17 @@ class EconomicThread[**P, T]:
                 fn._beliefs.update(record)
                 self._emit_attempt(ctx, record, handle.id)
 
-                # The reward in hand is the worth of the running result — the
-                # bar the stopping rule compares reservation prices against.
-                # Under merge that is the merged result's value, and beliefs
-                # project the worth *after* one more attempt, so ``g > bar``
-                # holds exactly while the projected gain covers the next
-                # attempt's cost. Without merge it is the attempt's reward.
-                observed = (
-                    (_value_of(fn._value, merged) if merged is not None else 0.0)
-                    if fn._merge is not None
-                    else reward
-                )
-                search.observe(label, reward=observed, cost=cost)
+                # Keep the best result by reward. The reward in hand is the bar
+                # the stopping rule compares reservation prices against; beliefs
+                # project the reward *after* one more attempt, so the search
+                # continues exactly while the projected gain covers the next
+                # attempt's cost.
+                if passed and reward > best_reward:
+                    best_result, best_reward = result, reward
+                search.observe(label, reward=reward, cost=cost)
 
-                # Plain routing returns on the first pass; merge continues,
-                # banking the running result, and lets the stopping rule decide.
-                if passed and fn._merge is None:
-                    return cast("T", result)
-
-            if merged is not None:
-                return cast("T", merged)
+            if best_result is not None:
+                return cast("T", best_result)
 
             # Nothing passed. Distinguish "never tried anything" (abstained)
             # from "tried and all failed" (exhausted) from "ran out of budget".
@@ -361,16 +303,31 @@ class EconomicThread[**P, T]:
             #      parameter-consolidation path (the function is its own host).
             if records:
                 self._emit_trace_delegation(ctx, decision_rounds, records, attempt_ids)
-                # Merged searches are not currently supported for textual
-                # optimization: what a score should settle depends on the
-                # particular merge function.
-                if fn._merge is None:
-                    await self._emit_decision_parameter(ctx, fn, decision_rounds, records)
+                await self._emit_decision_parameter(ctx, fn, decision_rounds, records)
             for h in attempt_handles:
                 try:
                     await h.terminate_now()
                 except Exception:  # noqa: BLE001 — teardown is best-effort
                     logger.debug("economics: failed to terminate attempt %s", h.id, exc_info=True)
+
+    @staticmethod
+    def _score_of(fn: EconomicFunction[P, T], result: Any) -> float:
+        """Score of a passing ``result`` in ``[0, 1]``; validate the range.
+
+        The default score is ``1.0`` (a pass is fully successful); a caller
+        grader (``fn._scorer``) may return partial credit. An out-of-range score
+        raises here — a clear failure rather than a later obscure one when the
+        score is folded into a belief's ``[0, 1]`` posterior.
+        """
+        if fn._scorer is None:
+            return 1.0
+        score = float(fn._scorer(result))
+        if not 0.0 <= score <= 1.0:
+            raise ValueError(
+                f"score must be in [0, 1], got {score} from the score function of {fn.name!r}; "
+                "return a normalized score (e.g. F1), not a dollar amount"
+            )
+        return score
 
     async def _task_view(self, candidate: Candidate[P, T], args: tuple[Any, ...], kwargs: dict[str, Any]) -> TaskView:
         """Build the ``TaskView`` estimators see: rendered prompt plus bound kwargs."""
@@ -386,14 +343,11 @@ class EconomicThread[**P, T]:
     ) -> dict[str, Estimate]:
         """Call the beliefs estimator; guarantee an estimate for every candidate (E4).
 
-        The scale passed is the declared constant value. Under ``merge`` the
-        value is a callable pricing merged totals, so no constant scale
-        exists; ``None`` is passed, and providers that price at the constant
-        scale (e.g. :class:`~.beliefs.EmpiricalBeliefs`) raise rather than
-        estimate at a fictitious one.
+        The scale passed is the declared constant ``value`` — the dollars a
+        fully-successful (score 1.0) result is worth. Beliefs price each
+        candidate's expected reward as ``value * E[score]``.
         """
-        scale = None if callable(fn._value) else float(fn._value)
-        estimates = await fn._beliefs.estimate(task, cast("list[Candidate]", candidates), scale, history)
+        estimates = await fn._beliefs.estimate(task, cast("list[Candidate]", candidates), float(fn._value), history)
         missing = [c.label for c in candidates if c.label not in estimates]
         if missing:
             raise AIFunctionError(f"beliefs returned no estimate for {missing}", function_name=fn.name)
@@ -419,12 +373,9 @@ class EconomicThread[**P, T]:
         stats = self._fn._beliefs.stats()
         payload: dict[str, Any] = {
             "ranking": [
-                {"label": r.label, "reservation_price": r.reservation_price, "net_value": r.net_value}
-                for r in ranking
+                {"label": r.label, "reservation_price": r.reservation_price, "net_value": r.net_value} for r in ranking
             ],
-            "estimates": {
-                label: {"expected_reward": e.dist.mean(), "cost": e.cost} for label, e in estimates.items()
-            },
+            "estimates": {label: {"expected_reward": e.dist.mean(), "cost": e.cost} for label, e in estimates.items()},
             "stats": dict(stats),
             "record_ids": [r.id for r in records],
         }
@@ -452,9 +403,7 @@ class EconomicThread[**P, T]:
         )
         summary = _render_routing_summary(self._fn.name, decision_rounds, records, records[responsible_idx].candidate)
         ctx.on_event(MessageUserEvent(thread_id=ctx.thread_id, text=summary))
-        ctx.on_event(
-            TraceDelegationEvent(thread_id=ctx.thread_id, child_thread_id=attempt_ids[responsible_idx])
-        )
+        ctx.on_event(TraceDelegationEvent(thread_id=ctx.thread_id, child_thread_id=attempt_ids[responsible_idx]))
 
     async def _emit_decision_parameter(
         self,
@@ -548,36 +497,31 @@ class EconomicFunction[**P, T]:
     """A set of candidates managed under one value, one budget, and shared beliefs.
 
     Callable with the candidates' task arguments; construct via
-    :func:`~.decorators.routed` / :func:`~.decorators.economic` or directly.
+    :func:`~.decorators.routed` or directly.
     Statefulness lives entirely in ``beliefs`` (shared and persistent by
     design); the function itself is a template like every other spawnable.
 
     Args:
         candidates: The alternatives, keyed by label.
-        value: Dollar worth of success (see :data:`Value`): a constant
-            without ``merge`` (routing), a callable pricing the merged
-            result under ``merge`` (repeated sampling).
+        value: Dollars a fully-successful result is worth — a positive
+            constant (see :data:`Value`). An attempt's reward is
+            ``value * score``.
         beliefs: Estimate/learn provider consulted per call.
         budget: Hard dollar cap per call; ``None`` = no cap.
-        policy: Search policy; ``None`` uses the ``Search`` default
-            (``Greedy``). A merged search should pass a continuing policy
-            such as ``ReservationPricePolicy`` — a one-shot policy stops at
-            the first banked reward. The decorators set this per door.
+        policy: Search policy; ``None`` uses the ``Search`` default. The
+            decorator sets ``ReservationPricePolicy`` (Weitzman), which
+            samples while a candidate's reservation price beats the best
+            reward in hand and keeps the best result by score.
         max_tries: Attempts per candidate per call; ``None`` = unbounded
-            (requires ``budget``). Under ``merge`` this caps draws per
-            candidate: the default 1 is Weitzman's classic open-each-box-
-            at-most-once; ``None`` is open-ended repeated sampling.
-        reestimate: Re-run ``beliefs.estimate`` after each attempt. Needed
-            whenever the beliefs project from the search's ``history``
-            (e.g. ``DiminishingReturns``); the ``@economic`` door turns it on.
-        carry_context: Seed each attempt from the previous attempt's transcript.
-        merge: Fold each passing attempt's result into a running result
-            (repeated sampling); rewards are booked as marginal gains.
-            Requires ``budget``.
+            (requires ``budget``). The default 1 is Weitzman's classic
+            open-each-box-at-most-once; ``None`` is open-ended repeated
+            sampling of the independent task.
+        scorer: Grade a passing result in ``[0, 1]`` (see
+            :data:`Scorer`); ``None`` means every pass scores ``1.0``.
 
     Raises:
         ValueError: Empty or duplicate labels; ``max_tries=None`` without
-            ``budget``; or a callable ``value`` without ``merge``.
+            ``budget``; or a callable / non-positive ``value``.
     """
 
     def __init__(
@@ -588,9 +532,7 @@ class EconomicFunction[**P, T]:
         budget: float | None = None,
         policy: Policy | None = None,
         max_tries: int | None = 1,
-        reestimate: bool = False,
-        carry_context: bool = False,
-        merge: Callable[[T, T], T] | None = None,
+        scorer: Scorer | None = None,
     ) -> None:
         if not candidates:
             raise ValueError("EconomicFunction requires at least one candidate")
@@ -599,22 +541,18 @@ class EconomicFunction[**P, T]:
                 raise ValueError("candidate labels must be non-empty")
             if c.label != label:
                 raise ValueError(f"candidate keyed {label!r} carries mismatched label {c.label!r}")
+        if callable(value):
+            raise ValueError("value must be a constant dollar amount; grade partial success with scorer= instead")
+        if value <= 0:
+            raise ValueError(f"value must be positive dollars, got {value}")
         self._candidates: dict[str, Candidate[P, T]] = dict(candidates)
         self._value = value
         self._beliefs = beliefs
         self._budget = budget
         self._policy = policy
-        self._carry_context = carry_context
-        self._merge = merge
+        self._scorer = scorer
         self._max_tries = max_tries
-        self._reestimate = reestimate
 
-        if merge is not None and budget is None:
-            raise ValueError("merge requires a budget (the stopping backstop)")
-        if merge is None and callable(value):
-            raise ValueError(
-                "a callable value requires merge (repeated sampling); routing takes a constant dollar value"
-            )
         if max_tries is None and budget is None:
             raise ValueError("max_tries=None requires a budget")
 
@@ -781,15 +719,15 @@ class EconomicFunction[**P, T]:
         def _report(result: Any, cost: float | None) -> None:
             assert candidate is not None and estimate is not None  # guarded by Decision.report
             passed = result is not None
-            reward = _value_of(self._value, result) if passed else 0.0
+            score = EconomicThread._score_of(self, result) if passed else 0.0
             counter[0] += 1
             record = AttemptRecord(
                 id=RecordId(f"plan-{plan_id}-{counter[0]}"),
                 task=task,
                 candidate=candidate.label,
                 cost=cost if cost is not None else estimate.cost,
-                reward=reward,
-                local_score=1.0 if passed else 0.0,
+                reward=self._value * score,
+                local_score=score,
             )
             self._beliefs.update(record)
 
@@ -820,9 +758,7 @@ class EconomicFunction[**P, T]:
             "budget": self._budget,
             "policy": self._policy,
             "max_tries": self._max_tries,
-            "reestimate": self._reestimate,
-            "carry_context": self._carry_context,
-            "merge": self._merge,
+            "scorer": self._scorer,
         }
         kwargs.update(changes)
         return EconomicFunction(**kwargs)

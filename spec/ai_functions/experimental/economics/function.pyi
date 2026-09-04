@@ -37,26 +37,18 @@ if TYPE_CHECKING:
     from ...types.graph import GradFeedback, Result
 
 
-Value = float | Callable[[Any], float]
-"""Dollar worth of a passing result. The two arms belong to the two doors:
-a constant under ``@routed`` (a pass books the full value), a callable
-under ``@economic`` (it prices the *merged* total; the search books the
-differences, so each attempt's reward is its marginal gain)."""
+Value = float
+"""Dollar worth of a fully-successful result — a positive constant. An
+attempt's reward is ``value * score``, where ``score`` is in ``[0, 1]``: the
+post-condition pass/fail by default, or a caller-supplied ``scorer``. So a
+perfect result books the full ``value``, a partial one books proportionally
+less, and a failure books ``0``."""
 
-
-def keep_best[T](value: Callable[[T], float]) -> Callable[[T, T], T]:
-    """The keep-the-best fold, ``@economic``'s default merge.
-
-    A new result replaces the incumbent only by scoring strictly higher
-    under ``value``.
-
-    Args:
-        value: The same dollar-worth function passed to the decorator.
-
-    Returns:
-        A ``(best, new) -> best`` merge function.
-    """
-    ...
+Scorer = Callable[[Any], float]
+"""Score of a passing result, in ``[0, 1]``. Defaults to the post-condition
+pass/fail (``1.0``/``0.0``); a caller may supply a grader (e.g. an F1 score)
+to reward partial success. An out-of-range score raises rather than silently
+corrupting the beliefs."""
 
 
 DECISION_EVENT: str
@@ -124,10 +116,8 @@ class EconomicThread[**P, T]:
     Produced by ``EconomicFunction.to_thread``. Satisfies the ``Thread``
     protocol; ``execute`` receives the call arguments directly and manages
     estimation, attempt spawning, booking, and stopping internally. Each
-    attempt is a separate child thread, warm-seeded from the prior attempt
-    when ``carry_context`` is set. Per-attempt usage is measured from the
-    attempt's event log against a post-spawn baseline, so warm-seeded copies
-    of earlier usage events are not double-counted.
+    attempt is a separate, independent child thread. Per-attempt usage is
+    measured from the attempt's event log against a post-spawn baseline.
     """
 
     def __init__(self, fn: EconomicFunction[P, T]) -> None: ...
@@ -141,8 +131,9 @@ class EconomicThread[**P, T]:
         """Run the full search loop for one task.
 
         Returns:
-            The typed result of the highest-reward passing attempt (the
-            merged result under ``merge``).
+            The result of the highest-scoring passing attempt. Attempts are
+            independent; the search samples while another is expected to pay
+            for itself and keeps the best result by ``score``.
 
         Raises:
             Abstained: No candidate had positive net value at decision time (E5).
@@ -178,36 +169,31 @@ class EconomicFunction[**P, T](Spawnable[P, T]):
     """A set of candidates managed under one value, one budget, and shared beliefs.
 
     Callable with the candidates' task arguments; construct via
-    :func:`~.decorators.routed` / :func:`~.decorators.economic` or directly.
+    :func:`~.decorators.routed` or directly.
     Statefulness lives entirely in ``beliefs`` (shared and persistent by
     design); the function itself is a template like every other spawnable.
 
     Args:
         candidates: The alternatives, keyed by label.
-        value: Dollar worth of success (see :data:`Value`): a constant
-            without ``merge`` (routing), a callable pricing the merged
-            result under ``merge`` (repeated sampling).
+        value: Dollars a fully-successful result is worth — a positive
+            constant (see :data:`Value`). An attempt's reward is
+            ``value * score``.
         beliefs: Estimate/learn provider consulted per call.
         budget: Hard dollar cap per call; ``None`` = no cap.
-        policy: Search policy; ``None`` uses the ``Search`` default
-            (``Greedy``). A merged search should pass a continuing policy
-            such as ``ReservationPricePolicy`` — a one-shot policy stops at
-            the first banked reward. The decorators set this per door.
+        policy: Search policy; ``None`` uses the ``Search`` default. The
+            decorator sets ``ReservationPricePolicy`` (Weitzman), which
+            samples while a candidate's reservation price beats the best
+            reward in hand and keeps the best result by score.
         max_tries: Attempts per candidate per call; ``None`` = unbounded
-            (requires ``budget``). Under ``merge`` this caps draws per
-            candidate: the default 1 is Weitzman's classic open-each-box-
-            at-most-once; ``None`` is open-ended repeated sampling.
-        reestimate: Re-run ``beliefs.estimate`` after each attempt. Needed
-            whenever the beliefs project from the search's ``history``
-            (e.g. ``DiminishingReturns``); the ``@economic`` door turns it on.
-        carry_context: Seed each attempt from the previous attempt's transcript.
-        merge: Fold each passing attempt's result into a running result
-            (repeated sampling); rewards are booked as marginal gains.
-            Requires ``budget``.
+            (requires ``budget``). The default 1 is Weitzman's classic
+            open-each-box-at-most-once; ``None`` is open-ended repeated
+            sampling of the independent task.
+        scorer: Grade a passing result in ``[0, 1]`` (see
+            :data:`Scorer`); ``None`` means every pass scores ``1.0``.
 
     Raises:
         ValueError: Empty or duplicate labels; ``max_tries=None`` without
-            ``budget``; or a callable ``value`` without ``merge``.
+            ``budget``; or a callable / non-positive ``value``.
     """
 
     def __init__(
@@ -218,9 +204,7 @@ class EconomicFunction[**P, T](Spawnable[P, T]):
         budget: float | None = None,
         policy: Policy | None = None,
         max_tries: int | None = 1,
-        reestimate: bool = False,
-        carry_context: bool = False,
-        merge: Callable[[T, T], T] | None = None,
+        scorer: Scorer | None = None,
     ) -> None: ...
 
     async def __call__(self, *args: P.args, **kwargs: P.kwargs) -> T:

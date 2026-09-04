@@ -39,6 +39,7 @@ Strands AI Functions is a Python library built around a new abstraction: functio
 - **One team, many runtimes** — Threads implement a common protocol, so any agent runtime can join a team; wrappers for Claude Code, Kiro and Codex ship in the box and are discovered, messaged, and orchestrated exactly like native threads.
 - **Natively distributed execution** — Swap the in-process coordinator for a client, and the same code runs across processes and machines.
 - **Memory and optimization** — Backpropagation-style natural-language feedback updates the prompts, facts, and code your workflow relies on, so it continuously improves.
+- **Economics-aware execution** — Declare what a result is worth in dollars, what each candidate model's tokens cost, and the library decides which model to try, whether to switch after a failure, and when to stop.
 
 ## Getting Started
 
@@ -384,6 +385,37 @@ await optimizer.step(
 ```
 
 *Procedural* parameters extend the same mechanism to code: the optimizer can store the Python an agent wrote to solve a task, so later runs reuse a proven implementation instead of regenerating it, a form of JIT compilation for agentic logic. Backends and optimizers are pluggable, and memory can also be exposed to agents as tools. See the [tutorial](docs/tutorial.md#memory-and-optimization) for the full workflow, `examples/memory_optimization.py` for a multi-agent example, and `examples/memory_backprop_scipy.py` for a complete learning loop on a code-generation benchmark.
+
+## Economics-aware execution
+
+Post-conditions give an AI Function correctness semantics; the `ai_functions.experimental.economics` module adds the economics: what a result is worth in dollars, what each candidate model's tokens cost, and therefore which model to try, whether to switch after a failure, and when to stop. One rule governs every attempt: **an attempt is worth making only when it's expected to yield more than it costs**.
+
+```python
+from ai_functions import ai_function
+from ai_functions.experimental.economics import LLMForecaster, PricedModel, Prices, routed
+
+# The candidate models, priced at what you pay (dollars per million tokens).
+HAIKU = PricedModel(model="global.anthropic.claude-haiku-4-5-20251001-v1:0",
+                    prices=Prices(input=1.00, output=5.00))
+SONNET = PricedModel(model="global.anthropic.claude-sonnet-4-6",
+                     prices=Prices(input=3.00, output=15.00))
+
+
+# A solved instance is worth 50 cents to us; check_sat is an ordinary
+# post-condition that verifies the assignment against the clauses.
+# Per-model pass rate and cost estimates come from a lightweight
+# AI Function (LLMForecaster).
+@routed(models=[HAIKU, SONNET], value=0.50, beliefs=LLMForecaster())
+@ai_function(post_conditions=[check_sat])
+def solve(clauses: str) -> Assignment:
+    """Find a satisfying assignment for this 3-SAT formula over variables x1..xN.
+
+    {clauses}"""
+
+result = await solve(clauses=clauses)   # called like any AI Function
+```
+
+`@routed` stacks on an ordinary `@ai_function`, routing each call across several models. `value` is what a verified success is worth in dollars; `models` are the candidates, each pairing a model with its token prices; and the post-conditions define success. Each call starts from per-candidate estimates (the chance of passing and expected cost, provided here by `LLMForecaster`), tries the most profitable candidate, returns its result if it passes, switches if it fails, and abstains when no candidate is worth its cost. See the [economics documentation](docs/economics.md) for more details.
 
 ## Security
 

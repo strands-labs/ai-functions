@@ -1,18 +1,18 @@
 """Keep the best report: sample either model while a better attempt is worth its cost.
 
-Two models review the same buggy C module as ``economics_stopping``. Each
-attempt is graded against the planted defects — a verifiable dollar score —
-and the search keeps whichever report scores highest. It keeps sampling
-while some model's *index* (reservation price) exceeds the best score in
-hand, i.e. while the expected gain from one more attempt still covers the
-attempt's cost.
+Two models review a buggy C module. Each attempt is independent and graded by
+F1 against the planted defects — a score in [0, 1] the decorator prices at
+``VALUE`` (reward = VALUE * F1) — and the search keeps whichever report scores
+highest. It keeps sampling while some model's *index* (reservation price)
+exceeds the best reward in hand, i.e. while the expected gain from one more
+attempt still covers its cost.
 
-The per-model indices come from a calibration phase: try each model a few
-times outside the search, grade each report, and keep the empirical reward
-distribution and average cost. Each index is computed from that
-distribution and cost; the search repeatedly tries the highest remaining
-index and stops when the best in hand beats every remaining index —
-Weitzman's Pandora's box rule.
+This is the graded form of ``@routed``: the score is a continuous
+[0, 1] grader rather than the default binary pass/fail, and the default
+``ReservationPricePolicy`` (Weitzman) drives sampling ordering and stopping.
+The per-model indices come from a calibration phase: try each model a few times
+outside the search, grade each report, and keep the empirical reward
+distribution and average cost as that model's Pandora "box".
 """
 
 import asyncio
@@ -33,7 +33,7 @@ from ai_functions.experimental.economics import (
     TaskView,
     attempts,
     decisions,
-    economic,
+    routed,
 )
 from ai_functions.experimental.economics.search import Categorical, Estimate
 from ai_functions.runtime.usage import subtree_token_usage
@@ -60,20 +60,26 @@ def at_least_one(result: Report) -> PostConditionResult | None:
     return None
 
 
-def worth(report: Report) -> float:
-    """Dollar worth of one report: its F1 score against the planted defects, scaled to VALUE.
+def f1_score(report: Report) -> float:
+    """Score of one report in [0, 1]: its F1 against the planted defects.
 
     F1 is the harmonic mean of precision (fraction of the report's claims
     that are real) and recall (fraction of the planted defects it found),
     so every false positive and every miss lowers the score — only a report
-    naming exactly the planted defects earns the full VALUE.
+    naming exactly the planted defects scores 1.0. The decorator prices this
+    at ``VALUE``: reward = VALUE * f1_score.
     """
     hits = len({d.function for d in report.defects} & set(PLANTED))
     if hits == 0:
         return 0.0
     precision = hits / len(report.defects)
     recall = hits / NUM_PLANTED
-    return VALUE * 2 * precision * recall / (precision + recall)
+    return 2 * precision * recall / (precision + recall)
+
+
+def worth(report: Report) -> float:
+    """Dollar worth of one report: ``VALUE * f1_score`` — the reward the search books."""
+    return VALUE * f1_score(report)
 
 
 class CalibratedRewards(Beliefs):
@@ -126,15 +132,18 @@ class CalibratedRewards(Beliefs):
 BOXES = CalibratedRewards()  # empty until phase 1 runs
 
 
-# keep_best is @economic's default merge: the indices are compared against the current
-# best reward
-@economic(
+# Graded best-of-N with adaptive ordering and stopping: each attempt is scored
+# by F1 (in [0, 1]) and priced at VALUE, and the search keeps the best result
+# while some model's index (reservation price) beats the best reward in hand —
+# Weitzman's Pandora rule, the default policy. Fixed calibrated boxes, so no
+# re-estimation is needed.
+@routed(
     models=[HAIKU, SONNET],
-    value=worth,
+    value=VALUE,  # dollars a perfect (F1 = 1.0) report is worth
+    scorer=f1_score,  # score in [0, 1]; reward = VALUE * f1_score
     budget=0.10,  # backstop; the indices are what should stop the search
     beliefs=BOXES,
     max_tries=MAX_TRIES,
-    reestimate=False,  # fixed boxes: one estimation round sets the indices
 )
 @ai_function[Report](post_conditions=[at_least_one])
 def review(source: str):

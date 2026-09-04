@@ -2,9 +2,8 @@
 
 A report pipeline: a *research* stage gathers sources, a *write* stage
 drafts the report from them. Each stage is ``@routed`` between a cheap and
-a strong model; an ``LLMForecaster`` reads each task and adjusts the
-learned statistics, so "quick factual query" routes cheap while "compare
-regulatory regimes" routes strong.
+a strong model; an ``LLMForecaster`` reads each task and makes task-specific
+estimates.
 
 The point of this example is the learning loop. Each stage's post-conditions
 are only *local* checks (format, citations present); whether the research
@@ -33,6 +32,7 @@ from strands import tool
 
 from ai_functions import ai_function
 from ai_functions.experimental.economics import LLMForecaster, RoutingMemory, routed, spend
+from ai_functions.experimental.economics.search import Greedy
 from ai_functions.memory import JSONMemoryBackend
 from ai_functions.optimizer import TextGradOptimizer
 
@@ -91,13 +91,14 @@ memory = JSONMemoryBackend(
 
 # Each stage: an LLM forecaster layered over learned statistics. The
 # forecaster reads the task, so "quick factual query" can route cheap while
-# "compare regulatory regimes" routes strong. Value is declared once, on the
-# decorator — the beliefs receive it per call.
+# "compare regulatory regimes" can route to a strong model. Value is declared
+# once, on the decorator — the beliefs receive it per call.
 @routed(
     models=[HAIKU, SONNET],
     value=0.05,  # good sources are worth 5 cents
     beliefs=LLMForecaster(memory=memory, memory_key="researcher_routing"),
     budget=0.10,
+    policy=Greedy(),
 )
 @ai_function[Sources](tools=[web_search], post_conditions=[cited])
 def research(query: str):
@@ -107,12 +108,13 @@ def research(query: str):
 
 
 # The higher value favours the stronger model over the cheap one under the
-# default Greedy policy (highest net value wins).
+# Greedy policy (highest net value wins).
 @routed(
     models=[HAIKU, SONNET],
     value=0.25,  # a good report is worth 25 cents
     beliefs=LLMForecaster(memory=memory, memory_key="writer_routing"),
     budget=0.15,
+    policy=Greedy(),
 )
 @ai_function[Report]
 def write(query: str, findings: Sources):

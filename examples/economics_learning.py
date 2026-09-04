@@ -3,9 +3,8 @@
 No estimates are given anywhere. ``@routed`` defaults to learning beliefs:
 the first calls explore from a uniform prior, every attempt's outcome
 (pass/fail against the verifier, cost from the event log) updates the
-per-candidate statistics, and routing sharpens as evidence accumulates —
-the cheap candidate keeps the easy regime, the strong one inherits the hard
-one.
+per-candidate statistics, so each candidate's pass rate and cost estimate
+sharpen as evidence accumulates.
 
 The function is called in a plain loop, like any async function. The only
 extra machinery is read-only: ``solve.beliefs.stats()`` snapshots what has
@@ -24,8 +23,8 @@ from ai_functions.experimental.economics import Abstained, CandidatesExhausted, 
 
 # A stream of same-difficulty instances — the setting where population-level
 # statistics are the right thing to learn. At this ratio the cheap model
-# clears some instances and misses others, so its posterior drops while the
-# strong model's holds and routing sharpens.
+# clears some instances and misses others, while the strong model solves most
+# instances
 TASKS = [(10, 3.6, seed) for seed in range(100, 106)]
 
 
