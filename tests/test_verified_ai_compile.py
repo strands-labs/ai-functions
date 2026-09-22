@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import math
-import os
 import runpy
 import struct
 import subprocess
@@ -16,11 +15,18 @@ from pathlib import Path
 
 import pytest
 
-from ai_functions import ai_verified_function
-from ai_functions._verified.compiler import Candidate, find_runtime, validate_candidate
-from ai_functions._verified.errors import CandidateError, CompilerError, ContractError, SynthesisError
+from ai_functions import scope
 from ai_functions.ai_thread import PostConditionResult
+from ai_functions.experimental.verified_compile import verified_ai_compile
+from ai_functions.experimental.verified_compile.compiler import Candidate, validate_candidate
+from ai_functions.experimental.verified_compile.errors import (
+    CandidateError,
+    CompilerError,
+    ContractError,
+    SynthesisError,
+)
 from ai_functions.testing import ScriptedModel, Turn
+from ai_functions.types import EventKind
 
 
 def clamp(x: int, lo: int = 0, hi: int = 10) -> int:
@@ -56,7 +62,7 @@ def model(*candidates):
 
 
 def decorate(cache, llm, **kwargs):
-    return ai_verified_function(
+    return verified_ai_compile(
         pre_conditions=[valid_bounds],
         post_conditions=[check_clamp],
         cache_dir=cache,
@@ -65,23 +71,19 @@ def decorate(cache, llm, **kwargs):
     )(clamp)
 
 
-@pytest.fixture
-def native_runtime():
-    try:
-        runtime = find_runtime()
-        runtime.preflight()
-        return runtime
-    except CompilerError:
-        if os.environ.get("AI_FUNCTIONS_REQUIRE_VERIFIED_RUNTIME"):
-            raise
-        pytest.skip("Install the verified extra to run native integration tests")
-
-
-async def test_real_proof_retry_native_calls_and_unbounded_integers(tmp_path, native_runtime):
+async def test_real_proof_retry_native_calls_and_unbounded_integers(tmp_path, native_runtime, caplog):
     llm = model(WRONG, GOOD)
     fn = decorate(tmp_path, llm, max_attempts=1)
     assert fn.artifact_dir is None
-    assert await fn(12) == 10
+    events = []
+    with caplog.at_level("INFO", logger="ai_functions.experimental.verified_compile.function"):
+        async with scope(on_event=events.append):
+            assert await fn(12) == 10
+    candidates = [event for event in events if event.kind == EventKind.TOOL_CALL]
+    assert [event.arguments for event in candidates] == [WRONG.model_dump(), GOOD.model_dump()]
+    assert "Verification failed for clamp:" in caplog.text
+    assert "Synthesizing clamp: attempt 2/2" in caplog.text
+    assert "Verified and compiled clamp" in caplog.text
     assert fn.is_compiled
     assert fn.artifact_dir is not None
     assert next(fn.artifact_dir.glob("*.lean")).is_file()
@@ -115,7 +117,7 @@ async def test_property_specified_median_matches_independent_sorting_oracle(tmp_
             "  repeat first | omega | (split <;> simp_all)"
         ),
     )
-    fn = ai_verified_function(
+    fn = verified_ai_compile(
         post_conditions=[definitions["is_median"]],
         model=model(candidate),
         cache_dir=tmp_path,
@@ -133,7 +135,7 @@ async def test_quantified_lower_bound_matches_bisect(tmp_path, native_runtime):
     root = Path(__file__).resolve().parents[1]
     definitions = runpy.run_path(str(root / "examples" / "verified_lower_bound.py"), run_name="lower_bound_tests")
     candidate = Candidate.model_validate_json((root / "tests" / "fixtures" / "verified_lower_bound.json").read_text())
-    fn = ai_verified_function(
+    fn = verified_ai_compile(
         pre_conditions=[definitions["sorted_values"]],
         post_conditions=[definitions["insertion_position"]],
         model=model(candidate),
@@ -155,7 +157,7 @@ async def test_maximum_payout_matches_exhaustive_fee_accounting(tmp_path, native
     root = Path(__file__).resolve().parents[1]
     definitions = runpy.run_path(str(root / "examples" / "verified_payout.py"), run_name="payout_tests")
     candidate = Candidate.model_validate_json((root / "tests" / "fixtures" / "verified_payout.json").read_text())
-    fn = ai_verified_function(
+    fn = verified_ai_compile(
         pre_conditions=[definitions["payout_inputs"]],
         post_conditions=[definitions["maximum_safe_payout"]],
         model=model(candidate),
@@ -207,7 +209,7 @@ print(f.run_sync(8))
 
 
 async def test_exhaustion_never_publishes_or_calls_unverified_code(tmp_path, native_runtime, monkeypatch):
-    from ai_functions._verified.compiler import Artifact
+    from ai_functions.experimental.verified_compile.compiler import Artifact
 
     def must_not_run(*args, **kwargs):
         pytest.fail("Unverified native code was invoked")
@@ -228,10 +230,10 @@ async def test_exhaustion_never_publishes_or_calls_unverified_code(tmp_path, nat
 
 
 async def test_precondition_and_type_errors_do_not_start_synthesis(tmp_path, monkeypatch):
-    def must_not_find_runtime():
+    def must_not_resolve_runtime(*args, **kwargs):
         pytest.fail("Invalid input reached compiler setup")
 
-    monkeypatch.setattr("ai_functions._verified.function.find_runtime", must_not_find_runtime)
+    monkeypatch.setattr("ai_functions.experimental.verified_compile.function.resolve_runtime", must_not_resolve_runtime)
     fn = decorate(tmp_path, model(), max_attempts=0)
     with pytest.raises(ContractError, match="valid_bounds"):
         await fn(1, 10, -10)
@@ -240,11 +242,16 @@ async def test_precondition_and_type_errors_do_not_start_synthesis(tmp_path, mon
     assert not fn.is_compiled
 
 
-async def test_missing_runtime_fails_before_model_calls(tmp_path, monkeypatch):
-    monkeypatch.setenv("AI_FUNCTIONS_VERIFIED_RUNTIME", str(tmp_path / "missing"))
+async def test_missing_toolchain_fails_before_model_calls(tmp_path, monkeypatch):
+    from ai_functions.experimental.lean import LeanConfig, LeanSetupError
+
+    def unavailable(*args, **kwargs):
+        raise LeanSetupError("Lean is missing in offline mode")
+
+    monkeypatch.setattr(LeanConfig, "setup", unavailable)
     llm = model(GOOD)
     fn = decorate(tmp_path / "cache", llm)
-    with pytest.raises(CompilerError, match="incomplete"):
+    with pytest.raises(CompilerError, match="offline"):
         await fn.compile()
     assert llm.remaining_turns == 1
 
@@ -261,7 +268,7 @@ async def test_boolean_inputs_and_result_via_native_ffi(tmp_path, native_runtime
         proof="by\n  intro v0 v1 h\n  cases v0 <;> cases v1 <;> rfl",
     )
     llm = model(candidate)
-    fn = ai_verified_function[bool](post_conditions=[contract], model=llm, cache_dir=tmp_path, max_attempts=0)(xor)
+    fn = verified_ai_compile[bool](post_conditions=[contract], model=llm, cache_dir=tmp_path, max_attempts=0)(xor)
     await fn.compile()
     for a in (False, True):
         for b in (False, True):
@@ -277,10 +284,30 @@ async def test_zero_argument_function_and_explicit_sync_compile(tmp_path, native
         assert result == 7
 
     llm = model(Candidate(implementation="7", proof="by simp [pre, post, implementation]"))
-    fn = ai_verified_function(post_conditions=[contract], cache_dir=tmp_path, model=llm)(seven)
+    fn = verified_ai_compile(post_conditions=[contract], cache_dir=tmp_path, model=llm)(seven)
     # The sync bridge must also work when the caller already has an event loop.
     assert fn.compile_sync() is fn
     assert await fn() == 7
+
+
+async def test_core_propositional_simp_lemmas_are_accepted(tmp_path, native_runtime):
+    def identity(value: int) -> int:
+        """Return value."""
+
+    def contract(result, value):
+        assert result == value and True
+
+    # A live payout synthesis used and_true after Bool.and_eq_true turned its
+    # contract into a proposition. The lexical filter must admit that core lemma.
+    candidate = Candidate(
+        implementation="v0",
+        proof=("by\n  intro v0 h\n  simp only [post, implementation, Bool.and_eq_true, decide_eq_true_eq, and_true]"),
+    )
+    fn = verified_ai_compile(post_conditions=[contract], model=model(candidate), cache_dir=tmp_path, max_attempts=0)(
+        identity
+    )
+    await fn.compile()
+    assert fn.run_sync(-17) == -17
 
 
 async def test_list_quantifiers_and_list_results_via_native_ffi(tmp_path, native_runtime):
@@ -294,7 +321,7 @@ async def test_list_quantifiers_and_list_results_via_native_ffi(tmp_path, native
         implementation="List.all v0 (fun t0 => decide (t0 < v1))",
         proof="by intro v0 v1 h; simp [pre, post, implementation]",
     )
-    fn = ai_verified_function(post_conditions=[bounded], model=model(candidate), cache_dir=tmp_path, max_attempts=0)(
+    fn = verified_ai_compile(post_conditions=[bounded], model=model(candidate), cache_dir=tmp_path, max_attempts=0)(
         all_below
     )
     assert await fn([], 0) is True
@@ -308,7 +335,7 @@ async def test_list_quantifiers_and_list_results_via_native_ffi(tmp_path, native
         assert result == values
 
     echo_model = model(Candidate(implementation="v0", proof="by intro v0 h; simp [pre, post, implementation]"))
-    copied = ai_verified_function(post_conditions=[same], model=echo_model, cache_dir=tmp_path, max_attempts=0)(echo)
+    copied = verified_ai_compile(post_conditions=[same], model=echo_model, cache_dir=tmp_path, max_attempts=0)(echo)
     values = [-(2**20000), 0, 2**20000]
     assert await copied(values) == values
     assert copied.run_sync([]) == []
@@ -325,7 +352,7 @@ async def test_float_classification_signed_zero_and_nan_normalization(tmp_path, 
         implementation="Float.isFinite v0 && Float.le (Float.ofBits (0x0000000000000000 : UInt64)) v0",
         proof="by intro v0 h; simp [pre, post, implementation]",
     )
-    fn = ai_verified_function(post_conditions=[classified], model=model(candidate), cache_dir=tmp_path, max_attempts=0)(
+    fn = verified_ai_compile(post_conditions=[classified], model=model(candidate), cache_dir=tmp_path, max_attempts=0)(
         finite_nonnegative
     )
     for value in (0.0, -0.0, 1.0, -1.0, math.inf, -math.inf, math.nan, 5e-324):
@@ -338,7 +365,7 @@ async def test_float_classification_signed_zero_and_nan_normalization(tmp_path, 
         assert math.isnan(result) == math.isnan(x)
         assert math.isfinite(result) == math.isfinite(x)
 
-    copied = ai_verified_function(
+    copied = verified_ai_compile(
         post_conditions=[preserves_classification],
         model=model(Candidate(implementation="v0", proof="by intro v0 h; simp [pre, post, implementation]")),
         cache_dir=tmp_path,
@@ -365,7 +392,7 @@ async def test_float_arithmetic_preserves_rounding_and_does_not_fuse_operations(
         implementation="Float.beq (v0 * v1 + v2) v3",
         proof="by intro v0 v1 v2 v3 h; simp [pre, post, implementation]",
     )
-    fn = ai_verified_function(post_conditions=[contract], model=model(candidate), cache_dir=tmp_path, max_attempts=0)(
+    fn = verified_ai_compile(post_conditions=[contract], model=model(candidate), cache_dir=tmp_path, max_attempts=0)(
         multiply_add_equals
     )
     assert await fn(1.0 + 2**-27, 1.0 - 2**-27, -1.0, 0.0) is True
@@ -398,7 +425,7 @@ async def test_default_synthesis_uses_opus_5_with_a_proof_sized_budget(tmp_path,
         settings.update(kwargs)
         return model(GOOD)
 
-    monkeypatch.setattr("ai_functions._verified.function.BedrockModel", configured_model)
+    monkeypatch.setattr("ai_functions.experimental.verified_compile.function.BedrockModel", configured_model)
     fn = decorate(tmp_path, None, max_attempts=0)
     assert await fn(12) == 10
     assert settings["model_id"] == "global.anthropic.claude-opus-5"
@@ -457,8 +484,10 @@ def test_implementation_cannot_escape_its_expression(implementation):
 def test_only_one_new_decorator_is_exported():
     import ai_functions
 
-    assert "ai_verified_function" in ai_functions.__all__
-    assert not hasattr(ai_functions, "ai_verified_compile")
+    assert "verified_ai_compile" not in ai_functions.__all__
+    assert not hasattr(ai_functions, "ai_verified_function")
+    assert callable(verified_ai_compile)
+    assert not hasattr(ai_functions, "verified_ai_compile")
 
 
 def test_original_function_attributes_cannot_override_compilation_state(tmp_path, monkeypatch):
@@ -470,10 +499,11 @@ def test_original_function_attributes_cannot_override_compilation_state(tmp_path
 
 @pytest.mark.parametrize("partial", [False, True])
 async def test_missing_provider_credentials_fail_once_with_setup_guidance(tmp_path, monkeypatch, partial):
+    from types import SimpleNamespace
+
     from botocore.exceptions import NoCredentialsError, PartialCredentialsError
 
-    from ai_functions._verified.compiler import Runtime
-    from ai_functions._verified.errors import ModelSetupError
+    from ai_functions.experimental.verified_compile.errors import ModelSetupError
 
     class MissingCredentialsModel(ScriptedModel):
         calls = 0
@@ -484,8 +514,10 @@ async def test_missing_provider_credentials_fail_once_with_setup_guidance(tmp_pa
                 raise PartialCredentialsError(provider="test", cred_var="secret_key")
             raise NoCredentialsError()
 
-    monkeypatch.setattr("ai_functions._verified.function.find_runtime", lambda: Runtime(tmp_path))
-    monkeypatch.setattr(Runtime, "preflight", lambda self: None)
+    monkeypatch.setattr(
+        "ai_functions.experimental.verified_compile.function.resolve_runtime",
+        lambda *args, **kwargs: SimpleNamespace(identity="test", preflight=lambda timeout: None),
+    )
     llm = MissingCredentialsModel([])
     fn = decorate(tmp_path / "cache", llm, max_attempts=3)
     with pytest.raises(ModelSetupError, match="AWS_PROFILE") as caught:

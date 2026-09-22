@@ -1,6 +1,6 @@
 # Verified native functions
 
-Use `ai_verified_function` for pure calculations governed by precise policies:
+Use `verified_ai_compile` for pure calculations governed by precise policies:
 which outputs are allowed, which limits must hold, and what makes an answer
 optimal. Write Python contracts that check a proposed result. The system
 synthesizes an implementation and checks a proof that it satisfies those
@@ -32,7 +32,7 @@ Because fees increase monotonically with the payout, rejecting the next cent
 establishes that no larger permitted payout fits.
 
 ```python
-from ai_functions import ai_verified_function
+from ai_functions.experimental.verified_compile import verified_ai_compile
 
 
 def payout_inputs(balance_cents: int, fixed_fee_cents: int, fee_bps: int, payout_limit_cents: int):
@@ -54,7 +54,7 @@ def maximum_safe_payout(result: int, balance_cents: int, fixed_fee_cents: int, f
         assert next_payout * fee_bps > next_fee_budget * 10_000
 
 
-@ai_verified_function(
+@verified_ai_compile(
     pre_conditions=[payout_inputs],
     post_conditions=[maximum_safe_payout],
     max_attempts=5,
@@ -115,33 +115,60 @@ proof cannot correct a missing policy rule or stale input data.
 
 ## Install and run
 
-Use CPython 3.12 or newer with the GIL enabled. Runtime wheels target macOS 15+
-and Linux with glibc 2.34+, on x86-64 and ARM64.
+Use standard CPython 3.12–3.14 on macOS 15+ or Linux, on x86-64 or ARM64:
 
 ```bash
-pip install 'strands-ai-functions[verified]'
+pip install strands-ai-functions
 ```
 
-Python setup installs the private compiler runtime as a dependency. It is a
-substantial download, split into data wheels that the package manager installs
-and caches normally. Importing the package and calling or compiling a function
-never downloads compiler tools. No separate compiler commands or development
-headers are needed.
+The first compilation downloads Lean if needed and builds the native runtime
+locally. Python development headers and C build tools are required; on macOS,
+install the Xcode Command Line Tools.
 
-The default synthesis model is `global.anthropic.claude-opus-5` on Amazon Bedrock,
-with a 65,536-token output budget and a 900-second network read timeout. Compiler
-installation does not configure model credentials. With an authenticated AWS
-profile, run:
+To set up Lean ahead of time, using the payout contracts above:
+
+```python
+from ai_functions.experimental.lean import LeanConfig
+
+lean = LeanConfig()
+lean.setup()
+
+@verified_ai_compile(
+    pre_conditions=[payout_inputs],
+    post_conditions=[maximum_safe_payout],
+    lean_config=lean,
+    offline=True,  # Disable tool downloads; synthesis still uses the model.
+)
+def max_payout(balance_cents: int, fixed_fee_cents: int, fee_bps: int, payout_limit_cents: int) -> int:
+    """Return the largest affordable payout in cents, subject to the payout limit."""
+
+max_payout.compile_sync()
+```
+
+By default, synthesis uses Claude through Amazon Bedrock. Run the payout example
+with an authenticated AWS profile:
 
 ```bash
-AWS_PROFILE=my-bedrock-profile hatch run verified:python examples/verified_payout.py
+STRANDS_TOOL_CONSOLE_MODE=enabled hatch run python examples/verified_payout.py
 ```
 
-Pass `model=` to the decorator to choose another model. A string selects a
-Bedrock model; a Strands `Model` instance selects a provider and its settings.
-A configured `BedrockModel` can also set a different token budget or timeout.
-The separate `CodexAgent` and `ClaudeAgent` adapters are not currently synthesis
-backends for this decorator.
+The examples print agent events and compilation progress, including verification
+failures and retries. Pass `model=` to `verified_ai_compile` to choose another model
+or provider (see also [Getting started](tutorial.md#getting-started)):
+
+```python
+from strands.models.openai import OpenAIModel
+
+model = OpenAIModel(client_args={"api_key": "<KEY>"}, model_id="gpt-4o")
+
+@verified_ai_compile(
+    pre_conditions=[payout_inputs],
+    post_conditions=[maximum_safe_payout],
+    model=model,
+)
+def max_payout(balance_cents: int, fixed_fee_cents: int, fee_bps: int, payout_limit_cents: int) -> int:
+    """Return the largest affordable payout in cents, subject to the payout limit."""
+```
 
 ## Contract semantics
 
@@ -215,7 +242,7 @@ the internal compiler language is needed to define or call the Python function.
 The example can print the source path directly:
 
 ```bash
-AWS_PROFILE=my-bedrock-profile hatch run verified:python examples/verified_payout.py --show-artifacts
+hatch run python examples/verified_payout.py --show-artifacts
 ```
 
 ## Supported contract types
@@ -282,16 +309,7 @@ decimal conversion. The pinned floating-point model/runtime canonicalizes NaNs;
 preserving a NaN's payload or sign bits is not part of this interface. Contracts
 cannot inspect raw floating-point bits.
 
-Unsupported source is reported with the Python validator's name and location.
-It is never dropped or approximated, including on an unreachable branch.
-An assertion inside a postcondition stays a postcondition; it is not inferred
-to be a precondition.
-
 ## Failures and configuration
-
-`max_attempts` retains the existing convention: it counts retries after the
-initial candidate. `max_attempts=3` permits four candidates; `0` permits one.
-Verification failures are supplied to the model for the next candidate.
 
 Setup errors and native build failures fail directly. Exhausted synthesis raises
 the existing `AIFunctionError` base type, with a function-oriented message and
@@ -305,6 +323,3 @@ locks. `cache_dir` can select a different artifact cache, including for CI.
 Verification establishes the written contracts. Their deterministic translation
 and the native compiler/runtime are trusted implementation components. Keep the
 contracts strong enough to specify the behavior the application needs.
-
-Maintainers can find runtime build and release instructions in
-[`runtime/README.md`](../runtime/README.md).

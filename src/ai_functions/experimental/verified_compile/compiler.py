@@ -4,43 +4,32 @@ Candidate text is filtered to a small lexical vocabulary and placed in expressio
 and proof positions in a trusted template. The filter rejects known unsupported
 constructs; it is not a Lean parser or a process sandbox.
 The saved declarations are replayed by the kernel in a separate process before
-native compilation or loading. The public API never downloads a toolchain.
+native compilation or loading. Shared Lean tooling provisions the pinned compiler
+and builds the direct Python/Lean bridge locally when needed.
 """
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
-import importlib.util
 import json
-import os
 import re
-import signal
-import subprocess
 import sys
-import sysconfig
 import textwrap
-import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from types import ModuleType
 
 from pydantic import BaseModel, Field
 
+from ..lean.errors import LeanError, LeanTimeoutError
+from ..lean.execution import run_command_async
+from ._runtime import _NATIVE_LOCK, Runtime
 from .contracts import Scalar, Specification
 from .errors import CandidateError, CompilerError
 
-LEAN_VERSION = "4.33.0"
-RUNTIME_VERSION = "0.2.0"
 TRANSLATOR_VERSION = 3
-FFI_ABI_VERSION = 1
 _NATIVE_KINDS = {int: 1, bool: 2, float: 3, list: 4}
-_NATIVE_LOCK = threading.RLock()
-_BRIDGES: dict[Path, ModuleType] = {}
-_BRIDGE_PROCESS: int | None = None
 _MAX_SOURCE = 32_768
-_MAX_DIAGNOSTICS = 32_768
 
 SPEC_HELPERS = """public def pythonIndex (length : Nat) (index : Int) : Nat :=
   (max 0 (min (Int.ofNat length) (if index < 0 then Int.ofNat length + index else index))).toNat
@@ -195,6 +184,16 @@ _PROOF_WORDS = _IMPL_WORDS | {
     "congrFun",
     "of_decide_eq_true",
     "decide_eq_true_eq",
+    "and_true",
+    "true_and",
+    "and_false",
+    "false_and",
+    "or_true",
+    "true_or",
+    "or_false",
+    "false_or",
+    "and_self",
+    "or_self",
     "Bool.true_eq_false",
     "True.intro",
     "False.elim",
@@ -436,190 +435,6 @@ LEAN_EXPORT const av_descriptor *ai_verified_descriptor_v1(void) {{ return &desc
 """
 
 
-def require_supported_python() -> None:
-    """Require a compatible CPython interpreter for the native extension."""
-    if sys.implementation.name != "cpython" or sys.version_info < (3, 12):
-        raise CompilerError("ai_verified_function requires CPython 3.12 or newer.")
-    if sysconfig.get_config_var("Py_GIL_DISABLED"):
-        raise CompilerError("ai_verified_function requires a CPython build with the GIL enabled.")
-    if sys.platform not in ("darwin", "linux"):
-        raise CompilerError("ai_verified_function currently supports macOS and Linux.")
-
-
-@dataclass(frozen=True)
-class Runtime:
-    """Paths to the runtime installed by the normal Python dependency resolver."""
-
-    directory: Path
-
-    @property
-    def toolchain(self) -> Path:
-        """Return the private, pinned native toolchain root."""
-        return self.directory / "toolchain"
-
-    @property
-    def extension(self) -> Path:
-        """Return the extension built for this CPython minor version."""
-        return self.directory / f"_bridge{sysconfig.get_config_var('EXT_SUFFIX')}"
-
-    @property
-    def identity(self) -> str:
-        """Identify compiler, FFI ABI and platform in cache keys."""
-        # Native libraries reference this installation's runtime libraries.
-        # A different virtual environment must not reuse dangling RPATHs.
-        identity = f"{RUNTIME_VERSION}:{LEAN_VERSION}:{sys.platform}:{os.uname().machine}:{self.directory.resolve()}"
-        # Include linkage in the identity so cached libraries always use the
-        # same explicit dependency resolution as newly compiled artifacts.
-        if flags := self.native_link_args():
-            identity += ":" + json.dumps(flags, separators=(",", ":"))
-        return identity
-
-    def native_link_args(self) -> list[str]:
-        """Resolve plugins against the bridge's installed shared runtime."""
-        library_dir = str(self.toolchain / "lib" / "lean")
-        if sys.platform == "darwin":
-            # Do not rely on the loader's caller (e.g. a sanitizer interceptor)
-            # to supply its own RPATHs when resolving this artifact's libraries.
-            return [
-                "-Xlinker",
-                "-rpath",
-                "-Xlinker",
-                library_dir,
-                "-Xlinker",
-                "-rpath",
-                "-Xlinker",
-                str(self.toolchain / "lib"),
-            ]
-        # Python loads extensions with RTLD_LOCAL. An ELF plugin therefore
-        # needs explicit dependencies on Lean's libraries, rather than relying
-        # on their symbols being globally visible. Reject unresolved symbols
-        # while linking instead of letting the loader terminate Python later.
-        return ["-Wl,-z,defs", f"-Wl,-rpath,{library_dir}", "-L", library_dir, "-lleanshared", "-lInit_shared"]
-
-    def environment(self, directory: Path) -> dict[str, str]:
-        """Isolate compiler discovery from user or ambient compiler configuration."""
-        env = {
-            k: v
-            for k, v in os.environ.items()
-            if not k.startswith(("LEAN", "LAKE", "DYLD_")) and k not in ("LD_PRELOAD", "LD_LIBRARY_PATH")
-        }
-        env.update(
-            {
-                "PATH": str(self.toolchain / "bin") + os.pathsep + os.environ.get("PATH", ""),
-                "LEAN_SYSROOT": str(self.toolchain),
-                "LEAN_PATH": str(directory),
-                "LC_ALL": "C",
-            }
-        )
-        if sys.platform == "darwin":
-            env["MACOSX_DEPLOYMENT_TARGET"] = "15.0"
-        return env
-
-    def bridge(self) -> ModuleType:
-        """Load the prebuilt native extension once, without setup downloads."""
-        global _BRIDGE_PROCESS
-        with _NATIVE_LOCK:
-            if _BRIDGES and _BRIDGE_PROCESS != os.getpid():
-                raise CompilerError("Compiled functions require a fresh Python process after fork; use spawn.")
-            if _BRIDGES and self.directory not in _BRIDGES:
-                raise CompilerError("The compiler runtime cannot be switched in a running process. Restart Python.")
-            if self.directory not in _BRIDGES:
-                try:
-                    module_name = "_ai_functions_verified_runtime._bridge"
-                    spec = importlib.util.spec_from_file_location(module_name, self.extension)
-                    if spec is None or spec.loader is None:
-                        raise ImportError("Missing native extension loader")
-                    bridge = importlib.util.module_from_spec(spec)
-                    spec.loader.exec_module(bridge)
-                    if bridge.ABI_VERSION != FFI_ABI_VERSION:
-                        raise ImportError("Native bridge ABI does not match the compiler adapter")
-                except (ImportError, OSError, RuntimeError, SystemError) as exc:
-                    raise CompilerError(
-                        "The verified-function runtime could not be loaded. Reinstall strands-ai-functions[verified]."
-                    ) from exc
-                _BRIDGES[self.directory] = bridge
-                _BRIDGE_PROCESS = os.getpid()
-            return _BRIDGES[self.directory]
-
-    def preflight(self) -> None:
-        """Check compiler availability before spending an LLM attempt."""
-        for binary in ("lean", "leanchecker", "leanc", "clang"):
-            if not (self.toolchain / "bin" / binary).is_file():
-                raise CompilerError(
-                    "The verified-function runtime is incomplete. Reinstall strands-ai-functions[verified]."
-                )
-        try:
-            result = subprocess.run(
-                [str(self.toolchain / "bin" / "lean"), "--version"],
-                capture_output=True,
-                text=True,
-                timeout=15,
-                env=self.environment(self.directory),
-            )
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            raise CompilerError(
-                "The private compiler could not start. Reinstall strands-ai-functions[verified]."
-            ) from exc
-        if result.returncode or f"version {LEAN_VERSION}," not in result.stdout:
-            raise CompilerError(
-                "The verified-function runtime has an incompatible version. Reinstall the verified extra."
-            )
-        self.bridge()
-
-
-def find_runtime() -> Runtime:
-    """Find installed runtime data; an override supports offline/development setups."""
-    require_supported_python()
-    override = os.environ.get("AI_FUNCTIONS_VERIFIED_RUNTIME")
-    if override:
-        directory = Path(override).expanduser().resolve()
-    else:
-        spec = importlib.util.find_spec("_ai_functions_verified_runtime")
-        if spec is None or not spec.submodule_search_locations:
-            raise CompilerError(
-                "Verification support is not installed. Install it during Python setup with "
-                "pip install 'strands-ai-functions[verified]'."
-            )
-        directory = Path(next(iter(spec.submodule_search_locations))).resolve()
-    runtime = Runtime(directory)
-    if not runtime.extension.is_file() or not (directory / "ffi.h").is_file():
-        raise CompilerError("Verification support is incomplete. Reinstall strands-ai-functions[verified].")
-    try:
-        metadata = json.loads((directory / "runtime.json").read_text())
-        if metadata.get("version") != RUNTIME_VERSION or metadata.get("ffi_abi") != FFI_ABI_VERSION:
-            raise ValueError("Incompatible native runtime")
-    except (OSError, ValueError, AttributeError) as exc:
-        raise CompilerError("Verification support needs an update. Reinstall strands-ai-functions[verified].") from exc
-    return runtime
-
-
-async def run_tool(runtime: Runtime, directory: Path, args: list[str], timeout: float) -> tuple[int, str]:
-    """Run a private compiler process; terminate its process group on cancellation."""
-    try:
-        process = await asyncio.create_subprocess_exec(
-            str(runtime.toolchain / "bin" / args[0]),
-            *args[1:],
-            cwd=directory,
-            env=runtime.environment(directory),
-            stdin=asyncio.subprocess.DEVNULL,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-            start_new_session=True,
-        )
-    except OSError as exc:
-        raise CompilerError("The private compiler could not be started.") from exc
-    try:
-        output, _ = await asyncio.wait_for(process.communicate(), timeout)
-    except (asyncio.CancelledError, TimeoutError):
-        try:
-            os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        await process.wait()
-        raise
-    return process.returncode or 0, output.decode("utf-8", errors="replace")[-_MAX_DIAGNOSTICS:]
-
-
 async def build_candidate(
     runtime: Runtime,
     spec: Specification,
@@ -632,29 +447,38 @@ async def build_candidate(
     module = "Verified" + hashlib.sha256(identity.encode()).hexdigest()[:40]
     code = source(spec, candidate, module)
     (directory / f"{module}.lean").write_text(code)
+    tools = runtime.toolchain
+    environment = tools.environment(directory)
     try:
-        status, output = await run_tool(
-            runtime,
-            directory,
-            ["lean", "-o", f"{module}.olean", "-c", f"{module}.c", f"{module}.lean"],
-            timeout,
+        result = await run_command_async(
+            [str(tools.lean), "-o", f"{module}.olean", "-c", f"{module}.c", f"{module}.lean"],
+            cwd=directory,
+            environment=environment,
+            timeout=timeout,
+            check=False,
         )
-        if status:
-            raise CandidateError(output or "The candidate did not satisfy the specification.")
-        status, output = await run_tool(runtime, directory, ["leanchecker", module], timeout)
-        if status:
-            raise CandidateError(output or "The proof failed independent kernel replay.")
-    except TimeoutError as exc:
+        if result.returncode:
+            raise CandidateError(result.stdout + result.stderr or "The candidate did not satisfy the specification.")
+        result = await run_command_async(
+            [str(tools.leanchecker), module],
+            cwd=directory,
+            environment=environment,
+            timeout=timeout,
+            check=False,
+        )
+        if result.returncode:
+            raise CandidateError(result.stdout + result.stderr or "The proof failed independent kernel replay.")
+    except LeanTimeoutError as exc:
         raise CandidateError("Proof checking exceeded its time budget; simplify the implementation or proof.") from exc
+    except LeanError as exc:
+        raise CompilerError(str(exc)) from exc
     suffix = ".dylib" if sys.platform == "darwin" else ".so"
     shim = f"{module}.ffi.c"
     (directory / shim).write_text(native_shim(spec, module))
     try:
-        status, output = await run_tool(
-            runtime,
-            directory,
+        result = await run_command_async(
             [
-                "leanc",
+                str(tools.leanc),
                 "-shared",
                 "-DLEAN_EXPORTING",
                 "-O2",
@@ -665,15 +489,21 @@ async def build_candidate(
                 shim,
                 "-I",
                 str(runtime.directory),
-                *runtime.native_link_args(),
+                *tools.native_flags,
+                *tools.link_args(),
             ],
-            timeout,
+            cwd=directory,
+            environment=environment,
+            timeout=timeout,
+            check=False,
         )
-    except TimeoutError as exc:
+    except LeanTimeoutError as exc:
         raise CompilerError("Native compilation exceeded its time budget.") from exc
-    if status:
+    except LeanError as exc:
+        raise CompilerError(str(exc)) from exc
+    if result.returncode:
         error = CompilerError("The verified implementation could not be compiled to native code.")
-        error.diagnostics = output
+        error.diagnostics = result.stdout + result.stderr
         raise error
     return module
 

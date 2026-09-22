@@ -28,4 +28,4 @@ dependencies = [
 # (poppler-utils). See README.md for setup.
 
 [tool.uv.sources]
-strands-ai-functions = { workspace = true }
+strands-ai-functions = { path = "../..", editable = true }

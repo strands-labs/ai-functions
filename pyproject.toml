@@ -43,10 +43,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-verified = [
-    # Installs the private compiler and native bridge during ordinary setup.
-    "strands-ai-functions-verified-runtime==0.2.0",
-]
 network = [
     "websockets>=12.0",
     "cloudpickle>=3.0.0",
@@ -124,9 +120,6 @@ test-cov = "pytest --cov=ai_functions {args:tests}"
 lint = "ruff check src tests"
 format = "ruff format src tests"
 check-spec = "MYPYPATH=spec stubtest ai_functions --mypy-config-file pyproject.toml --allowlist stubtest-allowlist.txt"
-
-[tool.hatch.envs.verified]
-python = "3.12"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

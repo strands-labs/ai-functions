@@ -1,6 +1,6 @@
 """Internal failure categories; callers can catch the existing AIFunctionError."""
 
-from ..ai_thread.errors import AIFunctionError
+from ...ai_thread.errors import AIFunctionError
 
 
 class ContractError(AIFunctionError):

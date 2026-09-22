@@ -2,7 +2,7 @@
  * Direct CPython/Lean bridge. No Python or Lean source is evaluated here.
  *
  * Built for each supported CPython minor version, using that interpreter's
- * integer layout. The Lean/GMP layout is pinned to Lean 4.33.0 and checked at
+ * integer layout. The Lean/GMP layout is pinned to Lean 4.33.1 and checked at
  * initialization. Large integers are repacked directly between their digit
  * arrays into the destination storage, without a temporary value buffer.
  */
@@ -408,7 +408,7 @@ static PyMethodDef methods[] = {
 static struct PyModuleDef module = {
     PyModuleDef_HEAD_INIT,
     .m_name = "_bridge",
-    .m_doc = "Private typed native FFI for ai_verified_function.",
+    .m_doc = "Private typed native FFI for verified_ai_compile.",
     .m_size = -1,
     .m_methods = methods,
 };
@@ -441,7 +441,7 @@ PyMODINIT_FUNC PyInit__bridge(void) {
             && number->allocated >= 1 && number->limbs && number->limbs[0] == INT64_MAX;
         lean_dec(probe);
         if (!compatible) {
-            PyErr_SetString(PyExc_ImportError, "Unsupported native integer layout; reinstall the verified runtime");
+            PyErr_SetString(PyExc_ImportError, "Unsupported native integer layout; use the supported Lean toolchain");
             return NULL;
         }
         runtime_ready = 1;

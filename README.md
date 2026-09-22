@@ -135,20 +135,6 @@ summary = await summarize_meeting(transcripts)  # a validated MeetingSummary ins
 
 Each direct call is a one-shot: it runs on a fresh, private thread and keeps no history between calls (for state, see [Stateful AI Threads](#stateful-ai-threads) below).
 
-## Verified Native Functions
-
-`ai_verified_function` generates a reusable native implementation from Python
-preconditions and postconditions, checks its correctness, and caches it for
-subsequent calls. Its API is Python-only; the private compiler runtime is
-installed with `pip install 'strands-ai-functions[verified]'`. This optional
-feature requires CPython 3.12+ on macOS or Linux. The
-[verified functions guide](docs/verified_functions.md) shows how to specify the
-largest affordable payout under fixed fees, rounded percentage fees, and a payout
-limit. Its contracts check feasibility and maximality without calculating the
-answer. See the [payout example](examples/verified_payout.py) and
-[sorted-table lookup](examples/verified_lower_bound.py). Integer lists, bounded
-quantifiers, and binary64 float contracts are supported.
-
 ## Native Python Objects
 
 Agents are usually limited to serializable inputs and outputs. An AI Function can instead be given a Python execution environment, letting the agent generate and run code to process arbitrary data and return native Python objects, with post-conditions guaranteeing the result's shape.

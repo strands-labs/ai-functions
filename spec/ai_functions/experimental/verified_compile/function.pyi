@@ -6,6 +6,8 @@ from typing import Any, overload
 
 from strands.models import Model
 
+from ..lean import LeanConfig
+
 class _VerifiedFunction[**P, T]:
     def __init__(
         self,
@@ -17,6 +19,8 @@ class _VerifiedFunction[**P, T]:
         max_attempts: int = 10,
         compile_timeout: float = 120,
         cache_dir: str | Path | None = None,
+        lean_config: LeanConfig | None = None,
+        offline: bool = False,
         output_type: type[T] | None = None,
     ) -> None: ...
     @property
@@ -51,6 +55,8 @@ class _VerifiedFactory:
         max_attempts: int = 10,
         compile_timeout: float = 120,
         cache_dir: str | Path | None = None,
+        lean_config: LeanConfig | None = None,
+        offline: bool = False,
     ) -> Callable[[Callable[..., T]], _VerifiedFunction[..., T]]: ...
 
-ai_verified_function: _VerifiedFactory
+verified_ai_compile: _VerifiedFactory

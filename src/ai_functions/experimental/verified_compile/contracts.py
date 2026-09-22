@@ -19,7 +19,7 @@ import typing
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 
-from ..ai_thread.postcondition import PostConditionResult
+from ...ai_thread.postcondition import PostConditionResult
 from .errors import ContractError
 
 Scalar = int | bool | float | list[int]
@@ -317,6 +317,10 @@ class _Translator:
         # misses builtins referenced only inside a nested all()/any(). Resolve
         # globals without executing them, while retaining Python's shadowing.
         self.constants = {**vars(builtins), **fn.__globals__, **closure.nonlocals}
+        # Python already identifies locals, including cells captured by generators.
+        # Only the branch environment may supply their values, never globals.
+        local_names = set(fn.__code__.co_varnames) | set(fn.__code__.co_cellvars)
+        self.constants = {name: value for name, value in self.constants.items() if name not in local_names}
 
     def fail(self, node: ast.AST, message: str) -> typing.NoReturn:
         line = self.line + getattr(node, "lineno", 1) - 1
@@ -598,7 +602,7 @@ def specification(
     """Freeze Python contract syntax into an explicit typed specification."""
     name = getattr(fn, "__name__", "verified_function")
     if not post_conditions:
-        raise ContractError("ai_verified_function requires at least one postcondition.", function_name=name)
+        raise ContractError("verified_ai_compile requires at least one postcondition.", function_name=name)
     try:
         hints = typing.get_type_hints(fn)
         signature = inspect.signature(fn)

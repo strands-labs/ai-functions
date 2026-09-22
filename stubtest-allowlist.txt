@@ -107,14 +107,14 @@ ai_functions.ai_thread.debug
 ai_functions.network.wire.ErrorKind
 
 # Same PEP 695 and optional-first-argument factory limitations as ai_function.
-# The public decorator and callable methods are specified in _verified/function.pyi.
-ai_functions._verified.function._TypedDecorator.__type_params__
-ai_functions._verified.function._VerifiedFunction.__type_params__
-ai_functions._verified.function._TypedDecorator.__call__
-ai_functions._verified.function._VerifiedFactory.__call__
+# The public decorator and callable methods are specified in experimental/verified_compile/function.pyi.
+ai_functions.experimental.verified_compile.function._TypedDecorator.__type_params__
+ai_functions.experimental.verified_compile.function._VerifiedFunction.__type_params__
+ai_functions.experimental.verified_compile.function._TypedDecorator.__call__
+ai_functions.experimental.verified_compile.function._VerifiedFactory.__call__
 
 # Private compiler, contract IR, and failure categories are implementation
-# details behind the single ai_verified_function decorator, not additional APIs.
-ai_functions._verified.compiler
-ai_functions._verified.contracts
-ai_functions._verified.errors
+# details behind the single verified_ai_compile decorator, not additional APIs.
+ai_functions.experimental.verified_compile.compiler
+ai_functions.experimental.verified_compile.contracts
+ai_functions.experimental.verified_compile.errors

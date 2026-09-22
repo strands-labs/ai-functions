@@ -13,27 +13,14 @@ import threading
 
 import pytest
 
-from ai_functions import ai_verified_function
-from ai_functions._verified.compiler import Candidate, find_runtime
-from ai_functions._verified.errors import CompilerError
+from ai_functions.experimental.verified_compile import verified_ai_compile
+from ai_functions.experimental.verified_compile.compiler import Candidate
 from ai_functions.testing import ScriptedModel, Turn
-
-
-@pytest.fixture
-def native_runtime():
-    try:
-        runtime = find_runtime()
-        runtime.preflight()
-        return runtime
-    except CompilerError:
-        if os.environ.get("AI_FUNCTIONS_REQUIRE_VERIFIED_RUNTIME"):
-            raise
-        pytest.skip("Install the verified extra to run native ABI tests")
 
 
 def make_function(fn, contract, candidate, cache):
     model = ScriptedModel([Turn(tool_calls=(("Candidate", candidate.model_dump()),))])
-    return ai_verified_function(post_conditions=[contract], model=model, cache_dir=cache, max_attempts=0)(fn)
+    return verified_ai_compile(post_conditions=[contract], model=model, cache_dir=cache, max_attempts=0)(fn)
 
 
 def integer(value: int) -> int:

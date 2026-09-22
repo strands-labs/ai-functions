@@ -3,13 +3,17 @@
 Amounts are integer cents. The percentage fee is charged on the payout and
 rounded up to a whole cent; the fixed fee is charged only for a nonzero payout.
 
-    AWS_PROFILE=my-profile hatch run verified:python examples/verified_payout.py --show-artifacts
+    AWS_PROFILE=my-profile hatch run python examples/verified_payout.py --show-artifacts
 """
 
 import argparse
+import asyncio
+import logging
 
-from ai_functions import ai_verified_function
+from ai_functions import scope
 from ai_functions.ai_thread import AIFunctionError
+from ai_functions.cli import print_event
+from ai_functions.experimental.verified_compile import verified_ai_compile
 
 
 def payout_inputs(balance_cents: int, fixed_fee_cents: int, fee_bps: int, payout_limit_cents: int):
@@ -31,7 +35,7 @@ def maximum_safe_payout(result: int, balance_cents: int, fixed_fee_cents: int, f
         assert next_payout * fee_bps > next_fee_budget * 10_000
 
 
-@ai_verified_function(
+@verified_ai_compile(
     pre_conditions=[payout_inputs],
     post_conditions=[maximum_safe_payout],
     max_attempts=5,
@@ -44,12 +48,15 @@ def max_payout(balance_cents: int, fixed_fee_cents: int, fee_bps: int, payout_li
     """
 
 
-if __name__ == "__main__":
+async def main() -> None:
+    """Compile with the agent event feed, then exercise the native function."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--show-artifacts", action="store_true", help="Print the specification, code, and proof path")
     arguments = parser.parse_args()
     try:
-        max_payout.compile_sync()
+        async with scope(on_event=print_event):
+            print("Preparing Lean and compiling max_payout...", flush=True)
+            await max_payout.compile()
         for balance, fixed_fee, fee_bps, limit in [
             (10_000, 30, 290, 20_000),
             (10_000, 30, 290, 5_000),
@@ -67,3 +74,8 @@ if __name__ == "__main__":
                 print(f"Specification, implementation, and proof: {path}")
     except AIFunctionError as error:
         raise SystemExit(str(error)) from None
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    asyncio.run(main())
