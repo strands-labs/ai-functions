@@ -49,7 +49,11 @@ def check_clamp(result, x, lo, hi):
 
 GOOD = Candidate(
     implementation="if v0 < v1 then v1 else if v0 > v2 then v2 else v0",
-    proof="by\n  intro v0 v1 v2 h\n  simp_all [pre, post, implementation]\n  split <;> simp_all <;> omega",
+    proof=(
+        "by\n  intro v0 v1 v2 h\n"
+        "  simp only [pre, pre0, post, post0, implementation] at *\n"
+        "  repeat first | omega | split | constructor"
+    ),
 )
 WRONG = Candidate(
     implementation="v0",
@@ -113,7 +117,7 @@ async def test_property_specified_median_matches_independent_sorting_oracle(tmp_
         implementation="max (min v0 v1) (min (max v0 v1) v2)",
         proof=(
             "by\n  intro v0 v1 v2 h\n"
-            "  simp_all [pre, post, implementation, Int.min_def, Int.max_def]\n"
+            "  simp_all [pre, post, post0, implementation, Int.min_def, Int.max_def]\n"
             "  repeat first | omega | (split <;> simp_all)"
         ),
     )
@@ -141,6 +145,7 @@ async def test_quantified_lower_bound_matches_bisect(tmp_path, native_runtime):
         model=model(candidate),
         cache_dir=tmp_path,
         max_attempts=0,
+        check_pre_conditions=True,
     )(definitions["lower_bound"].__wrapped__)
     await fn.compile()
     for length in range(5):
@@ -163,6 +168,7 @@ async def test_maximum_payout_matches_exhaustive_fee_accounting(tmp_path, native
         model=model(candidate),
         cache_dir=tmp_path,
         max_attempts=0,
+        check_pre_conditions=True,
     )(definitions["max_payout"].__wrapped__)
     await fn.compile()
     for balance, fixed, rate, cap in product(range(41), (0, 1, 3, 10, 50), (0, 1, 290, 3333, 10000), (0, 1, 5, 20, 50)):
@@ -185,6 +191,50 @@ async def test_maximum_payout_matches_exhaustive_fee_accounting(tmp_path, native
     for invalid in ((-1, 0, 0, 1), (1, -1, 0, 1), (1, 0, 10001, 1), (1, 0, 0, -1)):
         with pytest.raises(ContractError, match="payout_inputs"):
             fn.run_sync(*invalid)
+
+
+async def test_level_payment_matches_a_cent_by_cent_search(tmp_path, native_runtime):
+    # Captured from a real Opus 5.5 synthesis. The implementation never calls
+    # balance_after: it bisects over a Nat simulation that stops once the loan is
+    # paid off, and the proof relates that simulation to the contract's loop.
+    root = Path(__file__).resolve().parents[1]
+    definitions = runpy.run_path(str(root / "examples" / "verified_loan_payment.py"), run_name="loan_tests")
+    candidate = Candidate.model_validate_json((root / "tests" / "fixtures" / "verified_loan_payment.json").read_text())
+    assert "balance_after" not in candidate.implementation
+    fn = verified_ai_compile(
+        pre_conditions=[definitions["loan_terms"]],
+        post_conditions=[definitions["smallest_payment"]],
+        model=model(candidate),
+        cache_dir=tmp_path,
+        max_attempts=0,
+    )(definitions["level_payment"].__wrapped__)
+    await fn.compile()
+    balance_after = definitions["balance_after"]
+    for principal, rate, periods in product(range(0, 60, 7), (0, 1, 50, 5000, 10000), (1, 2, 3, 12)):
+        # The oracle scans one cent at a time, so it does not share the bisection.
+        expected = next(p for p in range(2 * principal + 1) if balance_after(principal, rate, p, periods) <= 0)
+        assert fn.run_sync(principal, rate, periods) == expected
+    assert fn.run_sync(25_000_000, 50, 360) == 149_888
+    huge = 2**200
+    payment = fn.run_sync(huge, 50, 12)
+    assert balance_after(huge, 50, payment, 12) <= 0 < balance_after(huge, 50, payment - 1, 12)
+    # Outside loan_terms the proof says nothing, and by default nothing checks. At 200%
+    # interest per period no payment up to twice the principal clears the loan, so the
+    # search returns its upper bound, which leaves 1,000 cents owed.
+    assert fn.run_sync(1_000, 20_000, 12) == 2_000
+    assert balance_after(1_000, 20_000, 2_000, 12) == 1_000
+    checked = verified_ai_compile(
+        pre_conditions=[definitions["loan_terms"]],
+        post_conditions=[definitions["smallest_payment"]],
+        model=model(),
+        cache_dir=tmp_path,
+        check_pre_conditions=True,
+    )(definitions["level_payment"].__wrapped__)
+    for invalid in ((-1, 0, 1), (1, -1, 1), (1, 10001, 1), (1, 0, 0), (1, 0, 1201)):
+        with pytest.raises(ContractError, match="loan_terms"):
+            checked.run_sync(*invalid)
+    # The options are not part of the cache key, so the checked function reuses the artifact.
+    assert checked.run_sync(25_000_000, 50, 360) == 149_888
 
 
 async def test_cached_artifact_works_in_a_fresh_python_process(tmp_path, native_runtime):
@@ -234,12 +284,71 @@ async def test_precondition_and_type_errors_do_not_start_synthesis(tmp_path, mon
         pytest.fail("Invalid input reached compiler setup")
 
     monkeypatch.setattr("ai_functions.experimental.verified_compile.function.resolve_runtime", must_not_resolve_runtime)
-    fn = decorate(tmp_path, model(), max_attempts=0)
+    fn = decorate(tmp_path, model(), max_attempts=0, check_pre_conditions=True)
     with pytest.raises(ContractError, match="valid_bounds"):
         await fn(1, 10, -10)
-    with pytest.raises(TypeError, match="must be int"):
-        fn.run_sync(True)
+    # Argument types are checked whether or not the contracts are.
+    for typed in (fn, decorate(tmp_path, model(), max_attempts=0)):
+        with pytest.raises(TypeError, match="must be int"):
+            typed.run_sync(True)
     assert not fn.is_compiled
+
+
+async def test_runtime_contract_checks_are_opt_in(tmp_path, monkeypatch):
+    # A stand-in for a wrong native result, as a bug in the trusted compiler,
+    # runtime, or value conversion could produce. The proof excludes it only when
+    # those components are correct; the optional check catches it on the inputs used.
+    class WrongArtifact:
+        def invoke(self, spec, values):
+            return 99
+
+    unchecked = decorate(tmp_path, model(), max_attempts=0)
+    checked = decorate(tmp_path, model(), max_attempts=0, check_pre_conditions=True, check_post_conditions=True)
+    for fn in (unchecked, checked):
+        monkeypatch.setattr(fn, "_artifact", WrongArtifact())
+    assert unchecked.run_sync(1, 10, -10) == 99
+    assert await unchecked(5) == 99
+    with pytest.raises(ContractError, match="valid_bounds"):
+        checked.run_sync(1, 10, -10)
+    with pytest.raises(CompilerError, match="failed contract 'check_clamp'"):
+        await checked(5)
+
+
+async def test_sampled_test_reports_passes_failures_and_untested_candidates(tmp_path, native_runtime):
+    from ai_functions.experimental.verified_compile.compiler import run_sampled_test, sample_inputs
+
+    spec = decorate(tmp_path, model())._spec
+    inputs = sample_inputs(spec)
+
+    async def report(implementation, cases=inputs):
+        return await run_sampled_test(native_runtime, spec, implementation, cases, tmp_path, 120)
+
+    assert (await report(GOOD.implementation)).startswith(f"PASSED on {len(inputs)} sampled inputs")
+    wrong = await report(WRONG.implementation)
+    assert wrong.startswith("WRONG on") and "counterexample v0=" in wrong
+    assert (await report("v0 +")).startswith("The implementation did not compile")
+    assert (await report("IO.println 1")).startswith("REJECTED before running")
+    assert (await report(GOOD.implementation, [])).startswith("INCONCLUSIVE")
+
+
+async def test_synthesis_tests_and_checks_before_it_submits(tmp_path, native_runtime):
+    llm = ScriptedModel(
+        [
+            Turn(tool_calls=(("test_implementation", {"implementation": WRONG.implementation}),)),
+            Turn(tool_calls=(("test_implementation", {"implementation": GOOD.implementation}),)),
+            Turn(tool_calls=(("check_lean", GOOD.model_dump()),)),
+            Turn(tool_calls=(("Candidate", GOOD.model_dump()),)),
+        ]
+    )
+    fn = decorate(tmp_path, llm, max_attempts=0)
+    events = []
+    async with scope(on_event=events.append):
+        assert await fn(12) == 10
+    reports = [json.dumps(event.content) for event in events if event.kind == EventKind.TOOL_RESULT]
+    assert "WRONG on" in reports[0]
+    assert "PASSED on" in reports[1]
+    assert "VERIFIED" in reports[2]
+    assert llm.remaining_turns == 0
 
 
 async def test_missing_toolchain_fails_before_model_calls(tmp_path, monkeypatch):
@@ -265,7 +374,7 @@ async def test_boolean_inputs_and_result_via_native_ffi(tmp_path, native_runtime
 
     candidate = Candidate(
         implementation="v0 != v1",
-        proof="by\n  intro v0 v1 h\n  cases v0 <;> cases v1 <;> rfl",
+        proof="by\n  intro v0 v1 h\n  cases v0 <;> cases v1 <;> decide",
     )
     llm = model(candidate)
     fn = verified_ai_compile[bool](post_conditions=[contract], model=llm, cache_dir=tmp_path, max_attempts=0)(xor)
@@ -283,7 +392,7 @@ async def test_zero_argument_function_and_explicit_sync_compile(tmp_path, native
     def contract(result):
         assert result == 7
 
-    llm = model(Candidate(implementation="7", proof="by simp [pre, post, implementation]"))
+    llm = model(Candidate(implementation="7", proof="by simp [pre, post, post0, implementation]"))
     fn = verified_ai_compile(post_conditions=[contract], cache_dir=tmp_path, model=llm)(seven)
     # The sync bridge must also work when the caller already has an event loop.
     assert fn.compile_sync() is fn
@@ -297,11 +406,11 @@ async def test_core_propositional_simp_lemmas_are_accepted(tmp_path, native_runt
     def contract(result, value):
         assert result == value and True
 
-    # A live payout synthesis used and_true after Bool.and_eq_true turned its
-    # contract into a proposition. The lexical filter must admit that core lemma.
+    # `and True` in a contract leaves an `∧ True` conjunct, closed by the core
+    # propositional lemma and_true. The lexical filter must admit it.
     candidate = Candidate(
         implementation="v0",
-        proof=("by\n  intro v0 h\n  simp only [post, implementation, Bool.and_eq_true, decide_eq_true_eq, and_true]"),
+        proof=("by\n  intro v0 h\n  simp only [post, post0, implementation, and_true]"),
     )
     fn = verified_ai_compile(post_conditions=[contract], model=model(candidate), cache_dir=tmp_path, max_attempts=0)(
         identity
@@ -319,7 +428,7 @@ async def test_list_quantifiers_and_list_results_via_native_ffi(tmp_path, native
 
     candidate = Candidate(
         implementation="List.all v0 (fun t0 => decide (t0 < v1))",
-        proof="by intro v0 v1 h; simp [pre, post, implementation]",
+        proof="by intro v0 v1 h; simp [pre, post, post0, implementation]",
     )
     fn = verified_ai_compile(post_conditions=[bounded], model=model(candidate), cache_dir=tmp_path, max_attempts=0)(
         all_below
@@ -334,7 +443,7 @@ async def test_list_quantifiers_and_list_results_via_native_ffi(tmp_path, native
     def same(result, values):
         assert result == values
 
-    echo_model = model(Candidate(implementation="v0", proof="by intro v0 h; simp [pre, post, implementation]"))
+    echo_model = model(Candidate(implementation="v0", proof="by intro v0 h; simp [pre, post, post0, implementation]"))
     copied = verified_ai_compile(post_conditions=[same], model=echo_model, cache_dir=tmp_path, max_attempts=0)(echo)
     values = [-(2**20000), 0, 2**20000]
     assert await copied(values) == values
@@ -350,7 +459,7 @@ async def test_float_classification_signed_zero_and_nan_normalization(tmp_path, 
 
     candidate = Candidate(
         implementation="Float.isFinite v0 && Float.le (Float.ofBits (0x0000000000000000 : UInt64)) v0",
-        proof="by intro v0 h; simp [pre, post, implementation]",
+        proof="by intro v0 h; simp [pre, post, post0, implementation]",
     )
     fn = verified_ai_compile(post_conditions=[classified], model=model(candidate), cache_dir=tmp_path, max_attempts=0)(
         finite_nonnegative
@@ -367,7 +476,7 @@ async def test_float_classification_signed_zero_and_nan_normalization(tmp_path, 
 
     copied = verified_ai_compile(
         post_conditions=[preserves_classification],
-        model=model(Candidate(implementation="v0", proof="by intro v0 h; simp [pre, post, implementation]")),
+        model=model(Candidate(implementation="v0", proof="by intro v0 h; simp [pre, post, post0, implementation]")),
         cache_dir=tmp_path,
         max_attempts=0,
     )(identity)
@@ -390,7 +499,7 @@ async def test_float_arithmetic_preserves_rounding_and_does_not_fuse_operations(
 
     candidate = Candidate(
         implementation="Float.beq (v0 * v1 + v2) v3",
-        proof="by intro v0 v1 v2 v3 h; simp [pre, post, implementation]",
+        proof="by intro v0 v1 v2 v3 h; simp [pre, post, post0, implementation]",
     )
     fn = verified_ai_compile(post_conditions=[contract], model=model(candidate), cache_dir=tmp_path, max_attempts=0)(
         multiply_add_equals
@@ -418,7 +527,7 @@ async def test_output_token_exhaustion_retries_within_the_budget(tmp_path, nativ
     assert llm.remaining_turns == 0
 
 
-async def test_default_synthesis_uses_opus_5_with_a_proof_sized_budget(tmp_path, native_runtime, monkeypatch):
+async def test_default_synthesis_uses_opus_5_5_with_a_proof_sized_budget(tmp_path, native_runtime, monkeypatch):
     settings = {}
 
     def configured_model(**kwargs):
@@ -428,8 +537,8 @@ async def test_default_synthesis_uses_opus_5_with_a_proof_sized_budget(tmp_path,
     monkeypatch.setattr("ai_functions.experimental.verified_compile.function.BedrockModel", configured_model)
     fn = decorate(tmp_path, None, max_attempts=0)
     assert await fn(12) == 10
-    assert settings["model_id"] == "global.anthropic.claude-opus-5"
-    assert settings["max_tokens"] == 65536
+    assert settings["model_id"] == "global.anthropic.claude-opus-5-5"
+    assert settings["max_tokens"] == 32768
     assert settings["boto_client_config"].read_timeout == 900
 
 

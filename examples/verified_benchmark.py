@@ -68,7 +68,17 @@ async def main() -> None:
         async with scope(on_event=print_event):
             print(f"Preparing Lean and compiling {function.__name__}...", flush=True)
             await wrapped.compile()
-        functions.append(wrapped)
+        # The same artifact, with the optional runtime contract checks enabled.
+        checked = verified_ai_compile(
+            post_conditions=[unchanged],
+            model=ScriptedModel([]),
+            max_attempts=0,
+            cache_dir=options.cache_dir,
+            check_pre_conditions=True,
+            check_post_conditions=True,
+        )(function)
+        await checked.compile()
+        functions.append((wrapped, checked))
 
     cases = [
         ("small_int", functions[0], 12345, 3000),
@@ -78,13 +88,16 @@ async def main() -> None:
         ("list_10000", functions[1], list(range(10000)), 15),
     ]
     results = {}
-    for name, function, value, count in cases:
+    for name, (function, checked), value, count in cases:
         bound = function._spec.bind(value)
         results[name] = {
             "ffi_microseconds": latency(
                 lambda function=function, bound=bound: function._artifact.invoke(function._spec, bound), count
             ),
             "function_microseconds": latency(lambda function=function, value=value: function.run_sync(value), count),
+            "checked_function_microseconds": latency(
+                lambda checked=checked, value=value: checked.run_sync(value), count
+            ),
         }
         print(name, results[name], flush=True)
     peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss

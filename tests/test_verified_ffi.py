@@ -31,7 +31,7 @@ def same(result, value):
     assert result == value
 
 
-IDENTITY = Candidate(implementation="v0", proof="by intro v0 h; simp [pre, post, implementation]")
+IDENTITY = Candidate(implementation="v0", proof="by intro v0 h; simp [pre, post, post0, implementation]")
 
 
 async def test_integer_digits_cross_python_and_gmp_boundaries(tmp_path, native_runtime):
@@ -59,7 +59,7 @@ async def test_native_list_ownership_and_input_references(tmp_path, native_runti
     fn = make_function(
         reverse,
         length_preserved,
-        Candidate(implementation="List.reverse v0", proof="by intro v0 h; simp [pre, post, implementation]"),
+        Candidate(implementation="List.reverse v0", proof="by intro v0 h; simp [pre, post, post0, implementation]"),
         tmp_path,
     )
     await fn.compile()
@@ -117,7 +117,7 @@ async def test_mixed_native_argument_registers(tmp_path, native_runtime):
         contract,
         Candidate(
             implementation="v1 && decide (v0 = Int.ofNat v3.length) && Float.le (Float.ofBits 0) v2",
-            proof="by intro v0 v1 v2 v3 h; simp [pre, post, implementation]",
+            proof="by intro v0 v1 v2 v3 h; simp [pre, post, post0, implementation]",
         ),
         tmp_path,
     )
@@ -138,7 +138,10 @@ async def test_large_arity_and_consumed_unused_arguments(tmp_path, native_runtim
     fn = make_function(
         ninth,
         contract,
-        Candidate(implementation="v8", proof="by intro v0 v1 v2 v3 v4 v5 v6 v7 v8 h; simp [pre, post, implementation]"),
+        Candidate(
+            implementation="v8",
+            proof="by intro v0 v1 v2 v3 v4 v5 v6 v7 v8 h; simp [pre, post, post0, implementation]",
+        ),
         tmp_path,
     )
     await fn.compile()
@@ -198,7 +201,7 @@ async def test_native_execution_releases_the_gil(tmp_path, native_runtime):
         nonnegative,
         Candidate(
             implementation="Int.ofNat (List.foldl (fun s x => s + x) 0 (List.range v0.natAbs))",
-            proof="by intro v0 h; simp [pre, post, implementation]",
+            proof="by intro v0 h; simp [pre, post, post0, implementation]",
         ),
         tmp_path,
     )

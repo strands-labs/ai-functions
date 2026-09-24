@@ -17,6 +17,16 @@ from ai_functions.experimental.verified_compile import verified_ai_compile
 
 
 def payout_inputs(balance_cents: int, fixed_fee_cents: int, fee_bps: int, payout_limit_cents: int):
+    """Define the inputs the synthesized function must handle.
+
+    The proof covers every combination admitted here, with no upper bound on the
+    balance, the fixed fee, or the limit: integers are arbitrary precision, so
+    values beyond machine-word range are in scope. `fee_bps` is a rate in basis
+    points, so 0 is a free payout and 10_000 is 100% of the payout.
+
+    Inputs outside this domain are rejected before any synthesis or native call,
+    which is why the implementation never has to define behavior for them.
+    """
     assert balance_cents >= 0
     assert fixed_fee_cents >= 0
     assert 0 <= fee_bps <= 10_000
@@ -24,12 +34,35 @@ def payout_inputs(balance_cents: int, fixed_fee_cents: int, fee_bps: int, payout
 
 
 def maximum_safe_payout(result: int, balance_cents: int, fixed_fee_cents: int, fee_bps: int, payout_limit_cents: int):
+    """State what makes a payout correct: it must fit, and it must be the largest that fits.
+
+    Three requirements, in order below:
+
+    1. The payout is nonnegative and respects both the limit and the balance.
+    2. A positive payout leaves enough money for the fixed fee and the
+       rounded-up percentage fee.
+    3. Unless the limit binds, one more cent would not fit.
+
+    Requirement 3 is what rules out answers that are safe but too small; without
+    it, returning 0 for every input would satisfy the contract. Because fees
+    increase monotonically with the payout, rejecting the next cent establishes
+    that no larger permitted payout fits either.
+
+    This is a specification, not a recipe. It says which answers are acceptable
+    and leaves the formula or search to the synthesizer, so reviewing it does
+    not mean reviewing an implementation.
+    """
     assert 0 <= result <= payout_limit_cents
     assert result <= balance_cents
     if result > 0:
+        # Whole cents left for fees. Negative means the fixed fee alone does not
+        # fit, and the assertion below then fails, which is the intent.
         fee_budget = balance_cents - result - fixed_fee_cents
+        # ceil(result * fee_bps / 10_000) <= fee_budget, written without division
+        # so the contract stays exact integer arithmetic and never rounds.
         assert result * fee_bps <= fee_budget * 10_000
     if result < payout_limit_cents:
+        # Maximality: the same affordability test must fail one cent higher.
         next_payout = result + 1
         next_fee_budget = balance_cents - next_payout - fixed_fee_cents
         assert next_payout * fee_bps > next_fee_budget * 10_000

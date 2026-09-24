@@ -21,6 +21,8 @@ class _VerifiedFunction[**P, T]:
         cache_dir: str | Path | None = None,
         lean_config: LeanConfig | None = None,
         offline: bool = False,
+        check_pre_conditions: bool = False,
+        check_post_conditions: bool = False,
         output_type: type[T] | None = None,
     ) -> None: ...
     @property
@@ -57,6 +59,8 @@ class _VerifiedFactory:
         cache_dir: str | Path | None = None,
         lean_config: LeanConfig | None = None,
         offline: bool = False,
+        check_pre_conditions: bool = False,
+        check_post_conditions: bool = False,
     ) -> Callable[[Callable[..., T]], _VerifiedFunction[..., T]]: ...
 
 verified_ai_compile: _VerifiedFactory

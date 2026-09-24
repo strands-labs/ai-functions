@@ -16,6 +16,7 @@ import platformdirs
 from botocore.config import Config as BotocoreConfig
 from botocore.exceptions import NoCredentialsError, PartialCredentialsError
 from botocore.exceptions import ReadTimeoutError as BotoReadTimeoutError
+from strands import tool
 from strands.models import BedrockModel
 from strands.types.exceptions import MaxTokensReachedException
 from urllib3.exceptions import ReadTimeoutError as HTTPReadTimeoutError
@@ -27,14 +28,15 @@ from ..lean import LeanConfig
 from ..lean.execution import run_in_thread
 from ..lean.locking import async_exclusive_file_lock
 from ..lean.toolchain import DEFAULT_LEAN_TOOLCHAIN
-from ._runtime import require_supported_python, resolve_runtime
+from ._runtime import Runtime, require_supported_python, resolve_runtime
 from .compiler import (
-    SPEC_HELPERS,
     Artifact,
     Candidate,
     build_candidate,
     cache_key,
     read_artifact,
+    run_sampled_test,
+    sample_inputs,
     write_manifest,
 )
 from .contracts import Scalar, Specification, kind_name, specification
@@ -43,16 +45,49 @@ from .errors import CandidateError, CompilerError, ModelSetupError, SynthesisErr
 if TYPE_CHECKING:
     from strands.models import Model
 
-_DEFAULT_MODEL_ID = "global.anthropic.claude-opus-5"
-_DEFAULT_MAX_TOKENS = 65536
+_DEFAULT_MODEL_ID = "global.anthropic.claude-opus-5-5"
+_DEFAULT_MAX_TOKENS = 32768
 _DEFAULT_READ_TIMEOUT = 900
+# Calls per synthesis attempt, shared by test_implementation and check_lean.
+_TOOL_CALLS = 24
 _logger = logging.getLogger(__name__)
+
+_TOOLS_PROMPT = """
+You have two tools, and {calls} calls in total across both.
+
+test_implementation(implementation) runs your implementation against the contracts
+on sampled inputs that satisfy the preconditions, and returns a counterexample if it
+is wrong. It needs no proof and takes a few seconds.
+check_lean(implementation, proof) runs the real checker and returns VERIFIED or the
+exact rejection text.
+
+Work in this order. First call test_implementation with your best guess at the
+implementation, even a rough one. If it reports a counterexample, fix the
+implementation and call it again. Only once it passes should you write a proof and
+call check_lean. After a check_lean rejection, fix only the first reported error and
+call again. Do not derive at length before calling a tool, and do not simulate Lean
+in your head: a counterexample costs seconds and tells you more than reasoning does.
+When check_lean reports VERIFIED, return the Candidate containing exactly the two
+strings that verified.
+"""
 
 
 def _prompt(spec: Specification) -> str:
     arguments = ", ".join(f"{name} is v{i}: {kind_name(kind)}" for i, (name, kind) in enumerate(spec.parameters))
     quantifier = f"forall {spec.binders}, " if spec.parameters else ""
     args = spec.arguments
+    helpers = spec.helpers()
+    notes = []
+    if spec.definitions:
+        names = ", ".join(d.name for d in spec.definitions)
+        notes.append(
+            f"The definitions {names} come from Python helpers and loops. Unfold them with\n"
+            "`simp only [name]` or `unfold name`; the implementation may call them. A loop is\n"
+            "a List.foldl; prove facts about it by induction on the list, generalizing the\n"
+            "accumulator. A name ending in _defined states when Python evaluates it without raising.\n"
+        )
+    if "pythonAt" in helpers:
+        notes.append("pythonAt xs i is Python's xs[i]; pythonAt_ofNat rewrites it for an in-range natural index.\n")
     return f"""Synthesize a pure, total Lean {spec.result_type} function and its proof.
 Return the structured Candidate with implementation and proof fields only.
 Inputs: {arguments or "(no arguments)"}.
@@ -60,32 +95,48 @@ Author guidance (the formal contracts below are authoritative):
 {spec.guidance}
 
 The following declarations are fixed and cannot be changed:
-{SPEC_HELPERS}
+{helpers}
 {spec.declarations()}
-
+{"".join(notes)}
 Your implementation field is ONLY the expression body of:
 def implementation {spec.binders} : {spec.result_type} := ...
 Your proof field is ONLY the term beginning with `by` proving:
-{quantifier}pre {args} = true -> post (implementation {args}) {args} = true
+{quantifier}pre {args} -> post (implementation {args}) {args}
 
 Implementation vocabulary: inputs v0, v1, ...; locals t0, t1, ...; decimal or
-hexadecimal integer literals; true/false; if/then/else; let; +, -, *; comparisons and Boolean
-operators; min, max, abs, Int.natAbs, Int.ofNat, Int.ediv, Nat.sqrt; pure List/Array functions,
-and Float arithmetic/classification. Explicitly terminating local recursion is allowed.
+hexadecimal integer literals; true/false; if/then/else; let; +, -, *, /, %, ^; comparisons and
+Boolean operators; min, max, Int.natAbs, Int.ofNat, Int.ediv, Int.fdiv, Int.fmod, Nat.sqrt,
+Option.getD; pure List/Array functions, and Float arithmetic/classification including Float.sqrt.
+Local recursion uses `let rec go ... termination_by ...` inside the implementation; proofs
+refer to it as implementation.go, with implementation.go.eq_1 and implementation.go.induct.
+Python's // and % are Int.fdiv and Int.fmod; Lean's / on Int is Euclidean and differs for
+negative divisors.
 List inputs/outputs are List Int. Float inputs/outputs use binary64, not real arithmetic.
 Use Float.beq for floating-point equality; NaN is unequal to itself, while signed zeroes compare equal.
 Do not use floating-point bit inspection, IO, partial definitions, or panicking operations.
 Proof vocabulary: intro, exact, apply, refine, have, show, cases, constructor,
 split, simp, simp_all, only, at, all_goals, first, try, repeat, omega, grind,
-decide, rfl, assumption, contradiction, trivial, by_cases, subst, rw, simpa, unfold,
-dsimp, change, revert, rcases, induction, calc. Use explicit binders for local names.
-Core Int/Nat/Bool/List/Array/Float lemmas are allowed. Propositional simplification
-lemmas and_true, true_and, and_false, false_and, or_true, true_or, or_false, false_or,
-and_self, and or_self are allowed too; these differ from the Bool-prefixed lemmas.
+decide, rfl, assumption, contradiction, trivial, done, by_cases, subst, rw, simpa,
+unfold, dsimp, change, revert, rcases, obtain, induction, calc.
+Destructuring binders such as `obtain ⟨n, hn⟩ := h` are supported.
+Core Int/Nat/Bool/List/Array/Float lemmas are allowed.
+The specification is stated in Prop, built from decidable atoms with ∧, ∨, ¬, ↔,
+`if c then P else Q`, and bounded `∀ x ∈ xs,` / `∃ x ∈ xs,`. Bool values appear
+only as `b = true`, including Lean's Bool-valued Float comparisons and classifiers,
+and a Bool result compared with a condition appears as `r = true ↔ P`.
+Your implementation is executable, so it computes with Bool: List.all, List.any and
+List.findIdx take Bool predicates. Relate it to the specification with
+List.all_eq_true, List.any_eq_true, Bool.and_eq_true, and decide_eq_true_eq, which
+plain simp also applies. `pre` and `post` are abbreviations of the indexed contracts,
+so `decide` and instance search see through them. Unfold with `simp only [pre, post]`,
+adding the indexed names such as `pre0` and `post0` that appear in the declarations
+above. Take a hypothesis apart
+with `obtain ⟨h0, h1⟩ := h` or `h.left` and `h.right`; build a conjunction goal with
+`refine ⟨?_, ?_⟩` or `constructor`; use `split` for an `if` in the goal, not for a
+conjunction.
 The trusted environment is {DEFAULT_LEAN_TOOLCHAIN}, with `public import Init`
 and `meta import all Lean`, including omega and grind, but no Mathlib.
-You have only the Candidate output tool; Lean checking runs after you submit it.
-Useful list lemmas include List.all_eq_true, List.any_eq_true, List.pairwise_cons,
+Useful list lemmas include List.pairwise_cons,
 List.findIdx_nil, List.findIdx_cons, List.findIdx_le_length, List.not_of_lt_findIdx,
 List.Pairwise.rel_of_mem_take_of_mem_drop, List.take_succ_cons, List.drop_succ_cons,
 List.length_take, List.length_drop, and List.length_cons. Sortedness is List.Pairwise.
@@ -102,17 +153,73 @@ obligations to linear arithmetic for omega.
 Before omega on Int.ofNat expressions, normalize casts with
 `simp only [Int.ofNat_eq_natCast] at *`. For nonnegative, in-range slice indices,
 pythonIndex_ofNat, pythonSlice_prefix, and pythonSlice_suffix are available.
-An often useful proof is: by intro v0 v1 v2 h; simp_all [pre, post, implementation]; split <;> simp_all <;> omega
+An often useful proof is:
+  by intro v0 v1 v2 h; simp only [pre, post, implementation] at *; refine ⟨?_, ?_⟩ <;> split <;> omega
 For nested conditionals, split all remaining branches, not just the outermost one.
-After simplifying Boolean contracts and case-splitting comparisons, omega may still
-fail on goals containing conjunctions and disjunctions. Use `first | omega | grind`
-to finish those branches instead of treating omega failure as a counterexample.
+Where omega stalls, use `first | omega | grind` to finish that branch instead of
+treating the omega failure as a counterexample.
 The `first` tactic accepts the first alternative that does not fail, even if goals
 remain. Do not put bare simp or simp_all among its closing alternatives; follow
 simplification with a tactic that closes every remaining goal.
 Use the appropriate number of inputs. No comments, strings, imports, commands,
 custom attributes, sorry/admit, unsafe code, native_decide, or run_tac.
-"""
+{_TOOLS_PROMPT.format(calls=_TOOL_CALLS)}"""
+
+
+def _synthesis_tools(
+    runtime: Runtime,
+    spec: Specification,
+    inputs: list[dict[str, Scalar]],
+    cache: Path,
+    timeout: float,
+    state: dict[str, int],
+) -> list[Any]:
+    """Build the tools for one compilation; they share a call budget per attempt."""
+
+    def exhausted() -> bool:
+        state["calls"] += 1
+        return state["calls"] > _TOOL_CALLS
+
+    @tool(name="test_implementation")
+    async def test_implementation(implementation: str) -> str:
+        """Run an implementation against the contracts on sampled inputs, without a proof.
+
+        Args:
+            implementation: The expression body of `def implementation ... := ...`.
+
+        Returns:
+            PASSED, a counterexample, or the reason nothing ran.
+        """
+        if exhausted():
+            return "Call budget exhausted. Return your best Candidate now."
+        with tempfile.TemporaryDirectory(prefix="test-", dir=cache) as temporary:
+            return await run_sampled_test(runtime, spec, implementation, inputs, Path(temporary), timeout)
+
+    @tool(name="check_lean")
+    async def check_lean(implementation: str, proof: str) -> str:
+        """Check an implementation and proof with the real checker.
+
+        Args:
+            implementation: The expression body of `def implementation ... := ...`.
+            proof: A term beginning with `by` that proves the fixed theorem.
+
+        Returns:
+            VERIFIED, or the exact rejection text.
+        """
+        if exhausted():
+            return "Call budget exhausted. Return your best Candidate now."
+        try:
+            candidate = Candidate(implementation=implementation, proof=proof)
+        except ValueError as error:
+            return f"REJECTED.\n{error}"
+        with tempfile.TemporaryDirectory(prefix="check-", dir=cache) as temporary:
+            try:
+                await build_candidate(runtime, spec, candidate, Path(temporary), timeout)
+            except (CandidateError, CompilerError) as error:
+                return f"REJECTED.\n{error}"
+        return "VERIFIED. Return exactly these two strings as your Candidate now."
+
+    return [test_implementation, check_lean]
 
 
 class _VerifiedFunction[**P, T]:
@@ -130,6 +237,8 @@ class _VerifiedFunction[**P, T]:
         cache_dir: str | Path | None = None,
         lean_config: LeanConfig | None = None,
         offline: bool = False,
+        check_pre_conditions: bool = False,
+        check_post_conditions: bool = False,
         output_type: type[T] | None = None,
     ) -> None:
         require_supported_python()
@@ -148,6 +257,8 @@ class _VerifiedFunction[**P, T]:
         )
         self._lean_config = lean_config or LeanConfig()
         self._offline = offline
+        self._check_pre = check_pre_conditions
+        self._check_post = check_post_conditions
         self._artifact: Artifact | None = None
         functools.update_wrapper(self, fn, updated=())
 
@@ -200,6 +311,12 @@ class _VerifiedFunction[**P, T]:
                     boto_client_config=BotocoreConfig(read_timeout=_DEFAULT_READ_TIMEOUT, connect_timeout=30),
                 )
 
+            # Test-then-prove: the model can run an implementation on sampled inputs and
+            # check a proof before it submits. The submitted candidate is checked again below.
+            inputs = await asyncio.to_thread(sample_inputs, self._spec)
+            budget = {"calls": 0}
+            tools = _synthesis_tools(runtime, self._spec, inputs, self._cache, self._timeout, budget)
+
             @ai_function[Candidate](
                 model=synthesis_model,
                 max_attempts=0,
@@ -208,6 +325,7 @@ class _VerifiedFunction[**P, T]:
                 system_prompt=(
                     "Produce only the requested implementation and a complete proof of the fixed specification."
                 ),
+                tools=tools,
             )
             def synthesize(prompt: str) -> str:
                 return prompt
@@ -220,6 +338,7 @@ class _VerifiedFunction[**P, T]:
             try:
                 for _attempt in range(self._max_attempts + 1):
                     _logger.info("Synthesizing %s: attempt %d/%d", self.name, _attempt + 1, self._max_attempts + 1)
+                    budget["calls"] = 0
                     try:
                         candidate = await handle.run(prompt)
                     except MaxTokensReachedException:
@@ -258,6 +377,7 @@ class _VerifiedFunction[**P, T]:
                                 "a revised "
                                 "implementation and proof. Fix the first proof or elaboration errors; "
                                 "a later sorryAx audit error can be caused by Lean's recovery from those errors. "
+                                "Check the revision with check_lean before you return it. "
                                 f"Diagnostics:\n{exc}"
                             )
                             continue
@@ -279,10 +399,19 @@ class _VerifiedFunction[**P, T]:
         return run_blocking(self.compile)
 
     async def __call__(self, *args: P.args, **kwargs: P.kwargs) -> T:
-        """Validate inputs, compile if needed, and call the verified native function."""
-        values = self._spec.bind(*args, **kwargs)
+        """Check argument types, compile if needed, and call the verified native function."""
+        values = self._values(*args, **kwargs)
         await self.compile()
         return await asyncio.to_thread(self._invoke, values)
+
+    def _values(self, *args: P.args, **kwargs: P.kwargs) -> dict[str, Scalar]:
+        # Types are always checked: the native bridge converts only the proved types.
+        # The proof covers every input satisfying the preconditions, so checking them
+        # at runtime only matters for callers that might pass inputs outside them.
+        values = self._spec.bind_types(*args, **kwargs)
+        if self._check_pre:
+            self._spec.check_pre_conditions(values)
+        return values
 
     def _invoke(self, values: dict[str, Scalar]) -> T:
         artifact = self._artifact
@@ -296,19 +425,21 @@ class _VerifiedFunction[**P, T]:
             error = CompilerError(f"Native execution failed for {self.name!r}.", function_name=self.name)
             error.diagnostics = str(exc)
             raise error from None
-        # This is an additional check of the trusted conversion boundary, not
-        # a substitute for the proof, and does not execute Python callbacks.
-        for condition in self._spec.post:
-            if not condition.predicate.evaluate({**values, "r": result}):
-                raise CompilerError(
-                    f"Compiled result failed contract {condition.name!r} ({condition.location}).",
-                    function_name=self.name,
-                )
+        if self._check_post:
+            # An additional check of the trusted native compiler, runtime, and
+            # conversion boundary, not a substitute for the proof. It evaluates the
+            # translated contracts and does not execute Python callbacks.
+            for condition in self._spec.post:
+                if not condition.predicate.evaluate({**values, "r": result}):
+                    raise CompilerError(
+                        f"Compiled result failed contract {condition.name!r} ({condition.location}).",
+                        function_name=self.name,
+                    )
         return typing.cast(T, result)
 
     def run_sync(self, *args: P.args, **kwargs: P.kwargs) -> T:
         """Call from synchronous Python, with no model calls after compilation."""
-        values = self._spec.bind(*args, **kwargs)
+        values = self._values(*args, **kwargs)
         if self._artifact is None:
             self.compile_sync()
         return self._invoke(values)
@@ -352,6 +483,8 @@ class _VerifiedFactory:
         cache_dir: str | Path | None = None,
         lean_config: LeanConfig | None = None,
         offline: bool = False,
+        check_pre_conditions: bool = False,
+        check_post_conditions: bool = False,
     ) -> Callable[[Callable[..., T]], _VerifiedFunction[..., T]]: ...
 
     def __call__(self, fn: Callable[..., Any] | None = None, /, **kwargs: Any) -> Any:
@@ -369,4 +502,8 @@ prepared on explicit or first-use compilation. Preconditions and
 postconditions use ordinary synchronous Python validator functions. The initial
 supported domain is pure ``int``/``bool``/``float``/``list[int]`` functions with explicit type hints.
 ``max_attempts`` is the number of retries after the initial synthesis attempt.
+Calls check argument types but, by default, do not evaluate the contracts.
+``check_pre_conditions=True`` rejects inputs outside the preconditions, which the
+proof does not cover. ``check_post_conditions=True`` re-checks each native result
+against the postconditions, guarding the trusted compiler, runtime, and conversion.
 """

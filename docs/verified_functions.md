@@ -215,12 +215,28 @@ an explicit compile call, the first valid function call performs compilation.
 artifact. Compilation proves one reusable function; it is not specialized to
 the first balance, fee, or limit.
 
-Preconditions are checked before every invocation. Invalid inputs do not
-initiate synthesis. Concurrent calls coordinate compilation through a file
-lock. Verified artifacts are reused across objects and Python processes using
-the same compatible runtime installation. Cache keys include the contracts,
-types, captured constants, guidance, compiler/translator version, platform,
-and runtime installation. Corrupted or incomplete entries are rebuilt.
+A call checks its argument types and runs the native code. By default it does
+not evaluate the contracts. The proof covers every input that satisfies the
+preconditions. An input that violates one still returns a value, because Lean
+functions are total, and the proof says nothing about that value. For example,
+a floor-division function implemented as `Int.fdiv v0 v1` returns 0 for a zero
+divisor, where Python would raise `ZeroDivisionError`.
+
+- `check_pre_conditions=True` evaluates the preconditions before every call.
+  Invalid inputs raise `ContractError` and do not initiate synthesis.
+- `check_post_conditions=True` evaluates the postconditions on every native
+  result, as a check on the trusted native compiler, runtime, and value
+  conversion for the inputs actually used. A failure raises `CompilerError`.
+
+Both checks run the translated contracts in a Python interpreter. For the loan
+example's $250,000, 360-period loan, the postcondition check takes about 26
+times as long as the native call.
+
+Concurrent calls coordinate compilation through a file lock. Verified artifacts
+are reused across objects and Python processes using the same compatible runtime
+installation. Cache keys include the contracts, types, captured constants,
+guidance, compiler/translator version, platform, and runtime installation.
+Corrupted or incomplete entries are rebuilt.
 
 ## Inspect generated artifacts
 
@@ -251,17 +267,40 @@ hatch run python examples/verified_payout.py --show-artifacts
   Integers retain arbitrary precision. Values must have the declared type;
   implicit integer/Boolean/float conversions are not performed.
 - Validators are ordinary synchronous functions available in Python source
-  files. Local assignments, `if`/`elif`/`else`, conditional expressions, early
-  returns, assertions, and simple explicit failures are supported.
-- Expressions support `+`, `-`, `*`, comparisons, and Boolean logic. Lists
-  support equality, membership, concatenation, `len`, `sorted`, and slices
+  files. Local assignments (including `x += 1` and `a, b = b, a`),
+  `if`/`elif`/`else`, conditional expressions, early returns, assertions, and
+  simple explicit failures are supported.
+- Expressions support `+`, `-`, `*`, `//`, `%`, `**` with a non-negative integer
+  literal exponent, float `/`, comparisons, and Boolean logic, plus `abs`, `min`,
+  `max`, `sum`, and `math.sqrt`. Lists support equality, membership,
+  concatenation, indexing (including negative indices), `len`, `sorted`,
+  `list`, `reversed`, `.count()`, `.index()`, list comprehensions, and slices
   without a step. A shallow snapshot of list references prevents caller
   mutation during validation or compilation from changing the verified input;
   the integer values are not copied.
-- Bounded `all` and `any` generators over integer lists and slices are supported,
-  including filters and nested quantifier expressions. Empty-domain and
-  short-circuit behavior follow Python. General indexing, stepped slices,
-  arbitrary calls, mutation, async validators, and AI validators are rejected.
+- Loops, comprehensions, and bounded `all`/`any` iterate over integer lists,
+  slices, `range()` (with any nonzero step), `zip()` of two, `enumerate()`
+  (optionally with a start), and `reversed()`, with filters and nested
+  quantifiers. Empty-domain and short-circuit behavior follow Python.
+- Calls to other functions in the same subset are supported and appear in the
+  specification as named Lean definitions. Recursive helpers are rejected.
+- `for` loops that update variables initialized before the loop are supported
+  and become `List.foldl` definitions. Loop bodies contain assignments and `if`
+  statements; `break`, `continue`, `return`, assertions inside the loop, and
+  `while` are rejected.
+- Operations that raise in Python (`//` or `%` by zero, float `/` by zero,
+  `math.sqrt` of a negative, out-of-range indexing, `min`/`max` of an empty
+  list, `.index()` of a missing value, a zero `range()` step) make the contract
+  fail exactly where Python would raise. Quantifiers require every element to be
+  defined, which is stricter than Python stopping at the first false element. A
+  loop whose raising operation depends on a branch over the loop's own
+  variables requires that operation to be defined on every iteration. Stricter
+  is sound: a stricter precondition narrows the inputs the proof covers (and,
+  with `check_pre_conditions=True`, rejects more of them), and a stricter
+  postcondition asks the proof for more.
+- Stepped slices, `while`, arbitrary method calls, mutation, float `//` and `%`,
+  float `sum` (CPython 3.12 sums floats with compensated summation), async
+  validators, and AI validators are rejected.
 - Captured numeric constants are frozen when the decorator is applied.
   Reapply the decorator to create a new specification after changing a captured
   constant. Mutable captured state is rejected.
@@ -289,7 +328,30 @@ def insertion_position(result: int, values: list[int], key: int):
 For integer lists, equality with `sorted(values)` translates to the equivalent
 pairwise ordering property. The returned position is specified independently of
 the search algorithm. Functional verification does not establish logarithmic
-complexity. List copying and runtime precondition validation also have a cost.
+complexity. List copying also has a cost, and so does runtime precondition
+validation with `check_pre_conditions=True`.
+
+### Helpers, loops, and indexing
+
+These examples state a property and leave the algorithm to synthesis:
+
+| Example | Contract uses | What the proof connects |
+| --- | --- | --- |
+| [Banker's rounding](../examples/verified_round_half_even.py) | `abs`, `%`, no division | a tie rule stated in integers, and a floor-division implementation |
+| [Installment splits](../examples/verified_installments.py) | `sum`, `max`, `min`, indexing, `range()`, a list result | four properties of the split, and the unique split they allow |
+| [First overdraft](../examples/verified_first_overdraft.py) | a helper, slices, `sum`, `range()` | a quadratic prefix-sum statement, and a single pass |
+| [Luhn check digit](../examples/verified_luhn_check_digit.py) | two helpers, `enumerate()`, `reversed()`, `%` | "appending it makes the number valid", and a direct computation |
+| [Best single trade](../examples/verified_best_trade.py) | nested quantifiers over `range()`, indexing | a comparison of every pair of days, and a single pass |
+| [Fee helper](../examples/verified_fee_helpers.py) | a helper, `//` | the payout policy as its own driver computes fees |
+| [First maximum](../examples/verified_first_maximum.py) | indexing, `range()`, quantifiers | where the answer is, and how to find it |
+| [Level loan payment](../examples/verified_loan_payment.py) | a helper containing a loop, `//` | "one cent less would not clear the loan", and a bisection over a `Nat` simulation that stops once the loan is paid off |
+
+A synthesized implementation can be less efficient than the one a docstring
+suggests; the proof covers the result, not the running time. State a performance
+requirement in the docstring as a requirement, as the loan example does. Lean
+keeps `Nat` values below 2^63 unboxed but `Int` values only within 32 bits, so an
+implementation that computes with `Nat` avoids big-integer arithmetic for values
+such as cents times basis points.
 
 ### Floating-point behavior
 
@@ -299,22 +361,47 @@ negative zero compare equal. `math.isfinite`, `math.isnan`, and `math.isinf` are
 supported in contracts. Use float literals such as `0.0` in float comparisons;
 mixed integer/float comparisons are rejected rather than rounded silently.
 
-Addition, subtraction, multiplication, and negation use binary64 semantics.
-Native compilation disables multiply/add contraction to preserve separate
-rounding steps. Division and transcendental functions in Python contracts are
-not yet supported.
+Addition, subtraction, multiplication, division, negation, and `math.sqrt` use
+binary64 semantics. Native compilation disables multiply/add contraction to
+preserve separate rounding steps. Lean's kernel evaluates binary64 arithmetic
+on concrete values but not `Float.sqrt` of an ordinary value, so proofs about
+square roots are limited to implementations that mirror the specification.
+Other transcendental functions are not yet supported.
 
 Finite values, infinities, subnormals, and signed zero cross the boundary without
 decimal conversion. The pinned floating-point model/runtime canonicalizes NaNs;
 preserving a NaN's payload or sign bits is not part of this interface. Contracts
 cannot inspect raw floating-point bits.
 
+## How synthesis works
+
+Each synthesis attempt gives the model two tools, with 24 calls per attempt
+across both:
+
+- `test_implementation` runs a candidate implementation, without a proof, on up
+  to 100 sampled inputs that satisfy the preconditions, and reports the first
+  input where a postcondition fails. It runs in a separate Lean process after
+  the same lexical filter as the proof check, and takes seconds.
+- `check_lean` runs the full check: the Lean kernel, `leanchecker`, the axiom
+  audit, and the native build.
+
+The model is told to test an implementation before it writes a proof. The
+candidate it returns is checked again before it is installed, so no tool result
+counts as verification.
+
+Sampled inputs come from fixed values per type, plus the integer literals in the
+contracts and their neighbors, which are the usual boundaries. A draw that fails
+a precondition is discarded. When no draw satisfies the preconditions, the test
+reports that nothing ran. The sample only guides the model; the proof covers
+every input that satisfies the preconditions.
+
 ## Failures and configuration
 
 Setup errors and native build failures fail directly. Exhausted synthesis raises
 the existing `AIFunctionError` base type, with a function-oriented message and
 optional internal `diagnostics` for debugging. A failed candidate is never
-installed or executed, and there is no fallback to an unverified implementation.
+installed or called through the native bridge, and there is no fallback to an
+unverified implementation.
 
 `compile_timeout` sets the timeout in seconds for each compiler/checker stage
 (default 120). Cancellation terminates compiler subprocesses and releases cache
@@ -323,3 +410,6 @@ locks. `cache_dir` can select a different artifact cache, including for CI.
 Verification establishes the written contracts. Their deterministic translation
 and the native compiler/runtime are trusted implementation components. Keep the
 contracts strong enough to specify the behavior the application needs.
+`check_post_conditions=True` re-checks results against the same translation, so
+it guards the compiler, runtime, and value conversion, but not a mistranslation
+of the Python contract.

@@ -68,7 +68,7 @@ def test_sortedness_is_a_property_equivalent_to_python_sorting(values):
 
     spec = specification(list_function, [ordered], [filtered_contract])
     assert spec.pre[0].predicate.evaluate({"v0": values}) == (values == sorted(values))
-    assert "List.Pairwise" in spec.pre[0].predicate.lean()
+    assert "List.Pairwise" in spec.pre[0].predicate.prop()
 
 
 def test_shadowed_builtins_and_unbounded_domains_are_rejected():
@@ -78,7 +78,8 @@ def test_shadowed_builtins_and_unbounded_domains_are_rejected():
     def contract(result, values):
         assert result == all(value > 0 for value in values)
 
-    with pytest.raises(ContractError, match="not supported"):
+    # A function that shadows a builtin is a helper, not the builtin, and is never executed.
+    with pytest.raises(ContractError, match="only inside the builtin"):
         specification(list_function, [], [contract])
 
     def local_shadow(result, values):
@@ -102,7 +103,7 @@ def test_float_comparisons_keep_ieee_nan_semantics(x, y, result):
     spec = specification(float_function, [], [float_contract])
     expected = result == ((x == y) or (math.isnan(x) and math.isinf(y)))
     assert spec.post[0].predicate.evaluate({"v0": x, "v1": y, "r": result}) == expected
-    assert "Float.beq" in spec.post[0].predicate.lean()
+    assert "Float.beq" in spec.post[0].predicate.prop()
 
 
 def test_mixed_numeric_comparison_is_not_silently_rounded():
