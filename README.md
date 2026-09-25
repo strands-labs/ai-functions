@@ -162,7 +162,7 @@ Sometimes the same derivation works for every input, with no records to look up 
 
 Agents are usually limited to serializable inputs and outputs. An AI Function can instead be given a Python execution environment, letting the agent generate and run code to process arbitrary data and return native Python objects, with post-conditions guaranteeing the result's shape.
 
-The "universal loader" below takes a file in *any* format, inspects it, and returns a validated `DataFrame` (see `examples/code_universal_loader.py`):
+The "universal loader" below takes a file in *any* format, inspects it, and returns a validated `DataFrame` (see `examples/code_execution/universal_loader.py`):
 
 ```python
 from pandas import DataFrame, api
@@ -197,7 +197,7 @@ Because AI Functions are just async functions, multi-agent systems are built wit
 
 ### Composing functions
 
-Standard `asyncio` composition runs agents in parallel; native return types let their results flow through the workflow like any other data (see `examples/compose_stock_report.py`):
+Standard `asyncio` composition runs agents in parallel; native return types let their results flow through the workflow like any other data (see `examples/workflows/stock_report.py`):
 
 ```python
 import asyncio
@@ -236,7 +236,7 @@ async def stock_report(stock: str) -> str:
 
 ### AI Functions as tools
 
-An AI Function can be handed to another agent as a tool, delegating the decision of when to invoke it (see `examples/compose_research_team.py`):
+An AI Function can be handed to another agent as a tool, delegating the decision of when to invoke it (see `examples/workflows/research_team.py`):
 
 ```python
 @ai_function(description="Perform web searches relevant to a query and return a summary of the results.", tools=[exa])
@@ -338,7 +338,7 @@ _ = await coord.spawn(researcher, thread_name="researcher")
 result = await coder.run("Profile src/parser.py and fix the hot spot. Ask `researcher` for the algorithm.")
 ```
 
-The Claude and Codex sessions are even given the coordinator's `list_threads` / `send_message` tools (bridged in over MCP), so they can delegate to their teammates on their own, exactly like a native thread. Backends ship as extras (`pip install 'strands-ai-functions[claude-code]'`, `[kiro]`, or `[codex]`); see the [tutorial](docs/tutorial.md#threads-as-a-protocol-claude-code-kiro-and-codex) and the runnable `examples/integrate_claude_code.py` and `examples/integrate_kiro.py`.
+The Claude and Codex sessions are even given the coordinator's `list_threads` / `send_message` tools (bridged in over MCP), so they can delegate to their teammates on their own, exactly like a native thread. Backends ship as extras (`pip install 'strands-ai-functions[claude-code]'`, `[kiro]`, or `[codex]`); see the [tutorial](docs/tutorial.md#threads-as-a-protocol-claude-code-kiro-and-codex) and the runnable `examples/integrations/claude_code.py` and `examples/integrations/kiro.py`.
 
 ## Distributed Operation
 
@@ -410,7 +410,7 @@ await optimizer.step(
 )
 ```
 
-*Procedural* parameters extend the same mechanism to code: the optimizer can store the Python an agent wrote to solve a task, so later runs reuse a proven implementation instead of regenerating it, a form of JIT compilation for agentic logic. Backends and optimizers are pluggable, and memory can also be exposed to agents as tools. See the [tutorial](docs/tutorial.md#memory-and-optimization) for the full workflow, `examples/memory_optimization.py` for a multi-agent example, and `examples/memory_backprop_scipy.py` for a complete learning loop on a code-generation benchmark.
+*Procedural* parameters extend the same mechanism to code: the optimizer can store the Python an agent wrote to solve a task, so later runs reuse a proven implementation instead of regenerating it, a form of JIT compilation for agentic logic. Backends and optimizers are pluggable, and memory can also be exposed to agents as tools. See the [tutorial](docs/tutorial.md#memory-and-optimization) for the full workflow, `examples/memory/optimization.py` for a multi-agent example, and `examples/projects/scipy_learning.py` for a complete learning loop on a code-generation benchmark.
 
 ## Economics-Aware Execution
 
@@ -449,7 +449,7 @@ Code execution is off by default. The `"local"` mode validates generated code wi
 
 ## Examples
 
-The `examples/` directory contains complete, runnable examples. Configure credentials for a supported model provider (see [Getting Started](#getting-started)), then:
+The [examples guide](examples/README.md) provides a summary of available examples with instructions. In general, configure credentials for a supported model provider (see [Getting Started](#getting-started)), then:
 
 ```bash
 # Clone the repository
@@ -460,14 +460,16 @@ cd ai-functions/examples
 export STRANDS_TOOL_CONSOLE_MODE="enabled"
 
 # Run an example using uv (recommended)
-uv run basics_one_shot.py
+uv run getting_started/one_shot.py
 ```
 
-**Note**: the examples default to Amazon Bedrock model IDs; edit the `model` assignment at the top of a script to run it with a different model or a different provider.
+The examples use `BedrockModel`s by default. Edit [models.py](examples/example_helpers/models.py) to change the model configuration or use a different model or provider.
 
 ## Tutorial
 
 For a full walkthrough of AI Functions, stateful threads, teams, distributed operation, custom spawnables, observability, memory, and optimization, see the [tutorial](docs/tutorial.md).
+
+For certified agents and tool calls, and for compiling verified workflows and functions, see [Verified AI Functions](docs/verified.md). For cost-aware model routing and learning, see [Economics](docs/economics.md).
 
 ## License
 

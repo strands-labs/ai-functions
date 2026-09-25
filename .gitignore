@@ -23,9 +23,9 @@ site/
 .DS_Store
 
 # example output
-examples/*.html
 examples/data/
 examples/verified/data/
-examples/*.egg-info/
-examples/multiagent_report.md
-examples/stock_report.html
+examples/workflows/multiagent_report.md
+examples/workflows/stock_report.html
+forecast_memory.json
+.lake/

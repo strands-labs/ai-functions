@@ -284,7 +284,7 @@ Note that we are telling the agent what tests to pass both in the prompt and as 
 
 AI agents are usually limited to working with serializable input-output types (strings, JSON objects, ...) rather than with native objects of the programming language. AI Functions, on the other hand, aim to provide a natural extension of the programming language itself, enabling new kinds of programming patterns and abstractions. In particular, agents can optionally be provided with a Python environment, allowing them to dynamically generate code to process arbitrary input data and return native Python objects.
 
-Consider, for example, a webapp that allows the user to upload an invoice in an arbitrary format (PDF, CSV, JSON, ...). The following snippet implements a "universal data loader": given the path to a file, the agent inspects its content, decides the appropriate processing pipeline, and returns a `DataFrame` in the desired format, validated by a post-condition. A second AI Function then applies a transformation that cannot be expressed in pure Python. See `examples/code_universal_loader.py` for a complete runnable implementation.
+Consider, for example, a webapp that allows the user to upload an invoice in an arbitrary format (PDF, CSV, JSON, ...). The following snippet implements a "universal data loader": given the path to a file, the agent inspects its content, decides the appropriate processing pipeline, and returns a `DataFrame` in the desired format, validated by a post-condition. A second AI Function then applies a transformation that cannot be expressed in pure Python. See `examples/code_execution/universal_loader.py` for a complete runnable implementation.
 
 ```python
 from pandas import DataFrame, api
@@ -443,7 +443,7 @@ Finally, `ThreadConfig.config_hook` is an optional callable invoked at the start
 
 ## Parallel workflows
 
-Because AI Functions are async-native, parallel workflows come for free with standard `asyncio` composition. In the example below, we write a report on the current trends of a given stock: first we run two research functions in parallel, then use their results to write the report (see `examples/compose_stock_report.py` for a more complete runnable version).
+Because AI Functions are async-native, parallel workflows come for free with standard `asyncio` composition. In the example below, we write a report on the current trends of a given stock: first we run two research functions in parallel, then use their results to write the report (see `examples/workflows/stock_report.py` for a more complete runnable version).
 
 ```python
 import asyncio
@@ -789,7 +789,7 @@ sequenceDiagram
 
 Application code has an equivalent, code-facing side channel: `handle.notify(text)`, described in [AI Threads](#ai-threads-adding-state), routes out-of-band context to any registered thread without starting a cycle.
 
-For a complete runnable example exercising all three `send_message` modes, see `examples/team_two_workers_local.py`.
+For a complete runnable example exercising all three `send_message` modes, see `examples/threads/two_workers_local.py`.
 
 ## Threads as a protocol: Claude Code, Kiro, and Codex
 
@@ -830,7 +830,7 @@ Two practical notes:
 - **Permissions.** All three runtimes gate tool use. Non-interactive scripts can bypass or pre-resolve this (`ClaudeAgentOptions(permission_mode="bypassPermissions")`; `KiroAgent(auto_approve=True)`, the default; `CodexAgent(approval_mode=ApprovalMode.auto_review)`, the default, which lets Codex's own reviewer arbitrate). Claude Code and Kiro route approval requests through the thread's interrupt channel; the Codex SDK exposes no human-in-the-loop callback, so its escalations are resolved by `approval_mode` alone and `CodexAgent(sandbox=...)` is the knob that bounds filesystem access. Only bypass approvals in trusted environments.
 - **Delegation from inside the session.** `ClaudeAgent` and `CodexAgent` sessions are also given the coordinator's `list_threads` / `send_message` tools, so they can discover teammates and delegate to them on their own, exactly like a native thread. Claude Code gets them from an in-process SDK MCP server; Codex reaches them over HTTP MCP, with each thread starting its own `CoordinatorToolServer`.
 
-See `examples/integrate_claude_code.py` and `examples/integrate_kiro.py` for complete runnable versions, including rendering the event stream of an external session.
+See `examples/integrations/claude_code.py` and `examples/integrations/kiro.py` for complete runnable versions, including rendering the event stream of an external session.
 
 Wrapping a foreign runtime is one use of the protocol; the same contract also admits plain-Python workflows that run as threads and orchestrate AI subagents of their own — see [Going further](#going-further) and the [architecture documentation](architecture.md#custom-spawnables) for implementing your own.
 
@@ -1022,9 +1022,9 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-See `examples/memory_optimization.py` for a full memory-optimization workflow on a multi-agent graph.
+See `examples/memory/optimization.py` for a full memory-optimization workflow on a multi-agent graph.
 
-For a worked end-to-end learning loop on DS-1000 code-generation problems, see `examples/memory_backprop_scipy.py`. It runs a three-step ablation: direct test with empty memory, train on 8 problems in parallel (gradients accumulated via `optimizer.backward`), then re-test with the trained memory. The shared `examples/_ds1000_utils.py` wraps the DS-1000 executor so execution failures flow into the optimizer feedback as rich context.
+For a worked end-to-end learning loop on DS-1000 code-generation problems, see `examples/projects/scipy_learning.py`. It runs a three-step ablation: direct test with empty memory, train on 8 problems in parallel (gradients accumulated via `optimizer.backward`), then re-test with the trained memory. The shared `examples/example_helpers/ds1000.py` wraps the DS-1000 executor so execution failures flow into the optimizer feedback as rich context.
 
 ### Memory backends
 
@@ -1168,7 +1168,7 @@ def travel_assistant(request: str) -> str:
     """
 ```
 
-`tool_provider` generates schema-scoped tools (`recall_<name>`, `query_<name>`, `search_<name>` for lists, and `save_<name>` / `delete_<name>` for scalars). You can restrict which operations are available: for example, `memory.tool_provider(..., operations={"recall", "search", "query"})` provides read-only access. See `examples/memory_tools.py` for a complete example.
+`tool_provider` generates schema-scoped tools (`recall_<name>`, `query_<name>`, `search_<name>` for lists, and `save_<name>` / `delete_<name>` for scalars). You can restrict which operations are available: for example, `memory.tool_provider(..., operations={"recall", "search", "query"})` provides read-only access. See `examples/memory/tools.py` for a complete example.
 
 ## Economics-aware execution
 

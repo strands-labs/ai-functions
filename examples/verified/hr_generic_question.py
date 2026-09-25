@@ -10,6 +10,8 @@ looks up the employee's records, and proves the answer from the rules.
 import asyncio
 from pathlib import Path
 
+from example_helpers import models
+
 from ai_functions.experimental import verified
 from ai_functions.experimental.verified.lean import LeanProject
 
@@ -50,7 +52,7 @@ def sick_days_taken(employee: str) -> int:
     contract=Policy.Answered,
     tools=[tenure_months, months_worked_this_year, vacation_days_taken, sick_days_taken],
     judgments=[Policy.asks],
-    model="global.anthropic.claude-opus-5",
+    model=models.large,
 )
 def answer(employee: str, message: str) -> bool:
     """Employee {employee} asks HR: "{message}"

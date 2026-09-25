@@ -15,7 +15,7 @@ Demonstrates:
 import asyncio
 from pathlib import Path
 
-from strands.models import BedrockModel
+from example_helpers import models
 
 from ai_functions import scope
 from ai_functions.cli import print_event
@@ -107,9 +107,7 @@ def fee_bps(kind: int) -> int:
 @verified.ai_function(
     contract=Audit.AuditCorrect,
     tools=[page_count, get_page, fee_bps],
-    # The proofs (several lemmas plus a scan invariant) do not fit the default
-    # output budget in one turn, so raise max_tokens rather than trim the task.
-    model=BedrockModel(model_id="global.anthropic.claude-opus-5", max_tokens=32768),
+    model=models.large,
     max_attempts=12,
 )
 def audit_ledger() -> list[int]:

@@ -14,8 +14,9 @@ import asyncio
 import bisect
 import logging
 import random
-import time
 from pathlib import Path
+
+from example_helpers import models
 
 from ai_functions import scope
 from ai_functions.cli import print_event
@@ -25,7 +26,7 @@ from ai_functions.experimental.verified.lean import LeanProject
 project = LeanProject(Path(__file__).parent / "lean", imports=["Lookup"])
 
 
-@verified.ai_compile(contract=project.symbols.Lookup.Contract, max_attempts=5)
+@verified.ai_compile(model=models.large, contract=project.symbols.Lookup.Contract, max_attempts=5)
 def lower_bound(values: list[int], value: int) -> int:
     """Return the first insertion index that preserves sorted order, including duplicates and missing values."""
 

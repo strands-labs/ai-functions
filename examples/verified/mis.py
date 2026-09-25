@@ -19,6 +19,7 @@ import asyncio
 from pathlib import Path
 
 import networkx as nx
+from example_helpers import models
 
 from ai_functions import scope
 from ai_functions.cli import print_event
@@ -82,7 +83,7 @@ def mis_solver(graph: Graph) -> Certified:
 @verified.ai_function(
     contract=MIS.Contract,
     tools=[mis_solver],
-    model="global.anthropic.claude-opus-5",
+    model=models.large,
     max_attempts=12,
 )
 def max_independent_set(verts: list[int], edges: list[tuple[int, int]]) -> int:

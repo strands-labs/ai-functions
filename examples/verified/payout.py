@@ -16,6 +16,8 @@ Demonstrates:
 import asyncio
 import logging
 
+from example_helpers import models
+
 from ai_functions import scope
 from ai_functions.cli import print_event
 from ai_functions.experimental import verified
@@ -63,7 +65,7 @@ def best_payout(result: int, balance_cents: int, fixed_fee_cents: int, fee_bps: 
 
 
 # The body is left empty: a model writes the implementation in Lean and proves `best_payout` for all inputs.
-@verified.ai_compile(contract=best_payout, max_attempts=5)
+@verified.ai_compile(model=models.large, contract=best_payout, max_attempts=5)
 def max_payout(balance_cents: int, fixed_fee_cents: int, fee_bps: int, payout_limit_cents: int) -> int:
     """Return the largest affordable payout in cents, subject to the payout limit.
 

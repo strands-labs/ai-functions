@@ -22,7 +22,7 @@ Single-instance invariant
 live file is present, so a second ``ai-functions server`` fails fast with a
 clear error. Users who really want multiple coordinators run
 :class:`CoordinatorEndpoint` directly (see
-``examples/team_two_workers_remote.py``) and skip the CLI.
+``examples/threads/two_workers_remote.py``) and skip the CLI.
 """
 # pyright: reportUnusedFunction=false
 # Typer registers each @server_app.command-decorated function by side effect;

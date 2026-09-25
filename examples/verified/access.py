@@ -17,6 +17,8 @@ Demonstrates:
 import asyncio
 from pathlib import Path
 
+from example_helpers import models
+
 from ai_functions import scope
 from ai_functions.cli import print_event
 from ai_functions.experimental import verified
@@ -113,7 +115,7 @@ def training_expiry(user: str) -> int:
 @verified.ai_function(
     contract=Access.DecisionCorrect,
     tools=[directory, grants_for, owner_of, classification_of, training_expiry],
-    model="global.anthropic.claude-opus-5",
+    model=models.large,
     max_attempts=12,
 )
 def may_export(user: str, dataset: str, today: int) -> bool:

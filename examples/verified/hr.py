@@ -16,6 +16,8 @@ Demonstrates:
 import asyncio
 from pathlib import Path
 
+from example_helpers import models
+
 from ai_functions.experimental import verified
 from ai_functions.experimental.verified.lean import LeanProject
 
@@ -52,7 +54,7 @@ def sick_days_taken(employee: str) -> int:
     contract=HR.DecisionCorrect,
     tools=[tenure_months, vacation_days_left, sick_days_taken],
     judgments=[HR.requestedLeave],
-    model="global.anthropic.claude-opus-5",
+    model=models.large,
 )
 def decide(employee: str, message: str) -> bool:
     """Decide the leave request employee {employee} sent: "{message}"

@@ -129,7 +129,7 @@ check-spec = "MYPYPATH=spec stubtest ai_functions --mypy-config-file pyproject.t
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-# Examples import sibling helpers (e.g. ``_utils``); tests that load an example
+# Examples import the ``example_helpers`` package; tests that load an example
 # by file path need ``examples/`` importable as a top-level location.
 pythonpath = ["examples"]
 python_files = ["test_*.py", "*_test.py"]
@@ -159,7 +159,7 @@ ignore = ["D107"]
 "tests/**/*.py" = ["D"]
 "examples/**/*.py" = ["D"]
 # Verbatim DS-1000 problem data: long embedded prompt/test strings can't wrap.
-"examples/_ds1000_scipy.py" = ["D", "E501"]
+"examples/example_helpers/ds1000_scipy.py" = ["D", "E501"]
 "src/ai_functions/network/client.py" = ["D101", "D102", "D105"]
 "src/ai_functions/network/endpoint.py" = ["D101", "D102", "D105"]
 "src/ai_functions/network/channel.py" = ["D101", "D102", "D105"]
@@ -184,4 +184,4 @@ init_forbid_extra = true
 init_typed = true
 
 [tool.uv.workspace]
-members = ["examples", "examples/skillsbench"]
+members = ["examples", "examples/projects/skillsbench"]

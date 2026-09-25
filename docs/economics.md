@@ -67,7 +67,7 @@ print(solve.beliefs.stats())
 
 Optional knobs bound and shape the search: `budget` is a hard dollar cap per call (distinct from `value`: `value` drives choices, `budget` bounds spend); `max_tries` (default 1) caps independent attempts per candidate; `scorer` grades partial success ([Tasks with continuous scores](#tasks-with-continuous-scores)); `policy` swaps the ordering-and-stopping rule ([Customizing the search](#customizing-the-search)).
 
-See `examples/economics_basics.py` for a runnable comparison: SAT instances routed via reservation index vs. straight to the strong model, with the dollar savings printed. `examples/economics_learning.py` shows the beliefs updated over a batch.
+See `examples/economics/routing_basics.py` for a runnable comparison: SAT instances routed via reservation index vs. straight to the strong model, with the dollar savings printed. `examples/economics/learning.py` shows the beliefs updated over a batch.
 
 ## Task-aware routing that learns: `LLMForecaster`
 
@@ -115,7 +115,7 @@ await optimizer.step(
 )
 ```
 
-One `optimizer.step` teaches the router two things at once. The *numeric* channel updates the statistics: the routed model's attempts in that run are re-scored by the downstream feedback, so a model whose results pass local checks but don't hold up downstream sees its pass rate sink anyway. The *text* channel distills the feedback into the forecaster's casebook (`research_routing/notes` in your memory), steering future task-dependent routing — "regulatory comparisons: haiku's sources too thin, route strong." Feedback given on a *downstream* output propagates to the routed stages that fed it, exactly as in [Memory and optimization](tutorial.md#memory-and-optimization); `examples/economics_workflow.py` runs the full loop on a two-stage pipeline, both stages routed, settled by one line of feedback on the final report.
+One `optimizer.step` teaches the router two things at once. The *numeric* channel updates the statistics: the routed model's attempts in that run are re-scored by the downstream feedback, so a model whose results pass local checks but don't hold up downstream sees its pass rate sink anyway. The *text* channel distills the feedback into the forecaster's casebook (`research_routing/notes` in your memory), steering future task-dependent routing — "regulatory comparisons: haiku's sources too thin, route strong." Feedback given on a *downstream* output propagates to the routed stages that fed it, exactly as in [Memory and optimization](tutorial.md#memory-and-optimization); `examples/economics/workflow.py` runs the full loop on a two-stage pipeline, both stages routed, settled by one line of feedback on the final report.
 
 ## How a search ends
 
@@ -146,7 +146,7 @@ def review(source: str) -> Report:
 
 The `scorer` must return a score in `[0, 1]`, otherwise an out-of-range error will be raised. If you have a raw count or an unbounded metric, normalize it first (e.g. divide by a target) and let `value` carry the scale.
 
-See `examples/economics_graded.py`: two models graded by F1, each calibrated with a few attempts to build an empirical reward distribution, then searched with the Pandora's Box rule.
+See `examples/economics/graded_search.py`: two models graded by F1, each calibrated with a few attempts to build an empirical reward distribution, then searched with the Pandora's Box rule.
 
 ## Customizing the search
 
@@ -174,7 +174,7 @@ class RatioBeliefs(Beliefs):
         }
 ```
 
-`estimate` must return a `ScoreCostEstimate` for every candidate it is given — a `ScoreDistribution` (how well the candidate will do, in `[0, 1]`) plus what one attempt costs. It never sees `value`; the `ScoreDistribution` is scaled by the provided `value` into a `RewardDistribution` in dollars. To provide constant estimates (with no learning), use `Beliefs.fixed({label: ScoreCostEstimate(...)})`. See `examples/economics_route.py` for the complete `RatioBeliefs` example.
+`estimate` must return a `ScoreCostEstimate` for every candidate it is given — a `ScoreDistribution` (how well the candidate will do, in `[0, 1]`) plus what one attempt costs. It never sees `value`; the `ScoreDistribution` is scaled by the provided `value` into a `RewardDistribution` in dollars. To provide constant estimates (with no learning), use `Beliefs.fixed({label: ScoreCostEstimate(...)})`. See `examples/economics/custom_routing.py` for the complete `RatioBeliefs` example.
 
 **Custom candidates.** When model swaps are not enough, pass `candidates=[Candidate(label=..., fn=..., prices=...)]` instead of `models=`: a candidate is *any* `AIFunction` plus its prices — a different thinking budget, a different prompt, or a non-LLM heuristic wrapped as a function. Build variants with `fn.replace(...)`.
 
@@ -196,18 +196,20 @@ await spend(run)                     # total dollars booked by the run and its s
 
 Every attempt runs as a child thread and emits durable events, so `spend` gives dollar accounting across a whole tree of economic calls from the event log alone. A failed run carries the same records on the exception's `.records`.
 
-**Deciding without executing.** `await fn.plan(...)` runs one estimation round and returns a `Decision` without attempting anything: the candidate the search would try first (`None` means it would abstain — the no-exception way to anticipate `Abstained`) and the full ranking, for dashboards and debugging. A caller that takes the decision and executes it *itself* closes the learning loop with `decision.report(result, cost)`; without it, the beliefs never see the outcome. See `examples/economics_route.py`.
+**Deciding without executing.** `await fn.plan(...)` runs one estimation round and returns a `Decision` without attempting anything: the candidate the search would try first (`None` means it would abstain — the no-exception way to anticipate `Abstained`) and the full ranking, for dashboards and debugging. A caller that takes the decision and executes it *itself* closes the learning loop with `decision.report(result, cost)`; without it, the beliefs never see the outcome. See `examples/economics/custom_routing.py`.
 
 **Persisting the plain statistics.** `LLMForecaster` persists everything it learns through its `RoutingMemory` field. To persist the default statistics without a forecaster, construct them with a backend directly: `EmpiricalBeliefs(memory=backend, stats_key="research_routing/stats")` reloads at construction and rewrites after every update, so a new process resumes routing where the last one left off.
 
 ## Examples
 
-| Example                 | Shows                                                                                                                       |
-|-------------------------|-----------------------------------------------------------------------------------------------------------------------------|
-| `economics_basics.py`   | `@routed` basics: cheap-first escalation on a SAT batch, dollar savings vs. a straight-to-strong baseline                   |
-| `economics_learning.py` | `EmpiricalBeliefs` converging over a batch: exploration from a uniform prior, routing sharpening with evidence              |
-| `economics_graded.py`   | Graded routing with `scorer`: two models graded by F1 with per-arm calibrated beliefs, searched with the Pandora's Box rule |
-| `economics_route.py`    | A custom task-dependent `Beliefs`; `plan()` previews each decision                                                          |
-| `economics_workflow.py` | Two routed stages in a pipeline; `LLMForecaster`, persistence, and feedback settling both stages via `optimizer.step`       |
+| Example                       | Shows                                                                                                                       |
+|-------------------------------|-----------------------------------------------------------------------------------------------------------------------------|
+| `economics/routing_basics.py` | `@routed` basics: cheap-first escalation on a SAT batch, dollar savings vs. a straight-to-strong baseline                   |
+| `economics/learning.py`       | `EmpiricalBeliefs` converging over a batch: exploration from a uniform prior, routing sharpening with evidence              |
+| `economics/graded_search.py`  | Graded routing with `scorer`: two models graded by F1 with per-arm calibrated beliefs, searched with the Pandora's Box rule |
+| `economics/custom_routing.py` | A custom task-dependent `Beliefs`; `plan()` previews each decision                                                          |
+| `economics/workflow.py`       | Two routed stages in a pipeline; `LLMForecaster`, persistence, and feedback settling both stages via `optimizer.step`       |
 
-Run any of them from the `examples/` folder with `uv run economics_<name>.py`.
+Run any of them from the `examples/` folder, for example
+`uv run economics/routing_basics.py`. The [examples guide](../examples/README.md#economics)
+lists all commands and setup requirements.

@@ -32,7 +32,7 @@ Note: this module is experimental; its API may change in future releases.
 
 ## Getting started
 
-Install the library and configure model credentials as described in the main tutorial's [Getting started](tutorial.md#getting-started). The library manages Lean for you: on first use, it finds a matching toolchain or downloads one, then builds your Lean project. This makes the first call noticeably slower than later ones. Verified compilation also requires a C compiler; on macOS, install the Xcode Command Line Tools. See [types, platforms, and limits](#types-platforms-and-limits) for the native execution requirements. Two environment variables control Lean setup:
+Install the library and configure model credentials as described in the main tutorial's [Getting started](tutorial.md#getting-started). The library manages Lean for you: on first use, it finds a matching toolchain or downloads one, then builds your Lean project. This makes the first call noticeably slower than later ones. Verified compilation uses `leanc` from that Lean installation; on macOS, install the Xcode Command Line Tools to provide the system SDK. See [types, platforms, and limits](#types-platforms-and-limits) for the native execution requirements. Two environment variables control Lean setup:
 
 - `AI_FUNCTIONS_LEAN_CACHE_DIR` sets where the toolchain and project builds are cached (by default, the platform's AI Functions cache directory).
 - `AI_FUNCTIONS_LEAN_TOOLCHAIN_MODE` selects where Lean comes from: `auto` (the default) uses a matching installed Lean if there is one and downloads otherwise, `system` requires an installed Lean and never downloads, and `managed` uses only the library's own cache.
@@ -475,7 +475,7 @@ When no implementation is accepted after the initial attempt and the allowed ret
 
 ### Types, platforms, and limits
 
-Native functions take and return `int`, `bool`, `float` and `list[int]`. Integers keep Python's arbitrary precision (`max_payout(2**100, ...)` works), and floats follow Lean's IEEE 754 double-precision semantics, so a float contract must say what happens with NaN and infinities. Verified compilation requires CPython 3.12 or later (the standard build with the GIL) on macOS or Linux, and a C compiler; on macOS, install the Xcode Command Line Tools.
+Native functions take and return `int`, `bool`, `float` and `list[int]`. Integers keep Python's arbitrary precision (`max_payout(2**100, ...)` works), and floats follow Lean's IEEE 754 double-precision semantics, so a float contract must say what happens with NaN and infinities. Verified compilation requires CPython 3.12 or later (the standard build with the GIL) on macOS or Linux and uses the Lean installation's `leanc`; on macOS, the Xcode Command Line Tools provide the required system SDK.
 
 Keep two limits in mind:
 
