@@ -30,7 +30,8 @@ def _report(name: str, outcome: Outcome) -> str:
         if outcome.code:
             parts.append(Syntax(outcome.code, "lean", word_wrap=True, background_color="default"))
         Console().print(Panel(Group(*parts), title=name, border_style="green" if outcome.ok else "red"))
-    return message + (f"\n```lean\n{outcome.code}\n```" if outcome.code else "")
+    code = outcome.excerpt or outcome.code
+    return message + (f"\n```lean\n{code}\n```" if code else "")
 
 
 @dataclass(frozen=True)

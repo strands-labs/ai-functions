@@ -41,6 +41,16 @@ def _check_name(name: str) -> str:
     return name
 
 
+def _set_options(options: Mapping[str, bool | int]) -> str:
+    """The ``set_option`` commands that open the prelude."""
+    lines = []
+    for name, value in options.items():
+        if type(value) is not bool and (type(value) is not int or value < 0):
+            raise ValueError(f"Option {name!r} must be a bool or a nonnegative int, not {value!r}")
+        lines.append(f"set_option {_check_name(name)} {str(value).lower()}")
+    return "\n".join(lines)
+
+
 def _name_parts(name: str) -> list[str]:
     """Split a Lean name into its components, unquoting quoted parts."""
     return [part[1:-1] if part.startswith("«") else part for part in re.findall(_NAME_PART, _check_name(name))]
@@ -176,6 +186,7 @@ class LeanProject:
         toolchain: LeanConfig | None = None,
         lean_toolchain: str | None = None,
         offline: bool = False,
+        options: Mapping[str, bool | int] | None = None,
     ) -> None:
         if path is not None and imports is None:
             raise ValueError("A project path needs imports=, the modules to import")
@@ -183,6 +194,7 @@ class LeanProject:
         self._source = Path(path).expanduser().resolve() if path is not None else None
         self._toolchain = toolchain or LeanConfig()
         self._offline = offline
+        self._options = _set_options(options or {})
         if self._source is None:
             self._pin = lean_toolchain or DEFAULT_LEAN_TOOLCHAIN
             self._config = {
@@ -220,6 +232,7 @@ class LeanProject:
         imports: Sequence[str],
         toolchain: LeanConfig | None = None,
         offline: bool = False,
+        options: Mapping[str, bool | int] | None = None,
     ) -> LeanProject:
         """Open a project shipped as data inside an importable Python package."""
         if Path(resource).is_absolute() or ".." in Path(resource).parts:
@@ -228,7 +241,7 @@ class LeanProject:
             path = Path(str(importlib.resources.files(package).joinpath(resource)))
         except (OSError, ImportError) as exc:
             raise LeanSetupError(f"Could not load Lean project from {package!r}/{resource}: {exc}") from exc
-        return cls(path, imports=imports, toolchain=toolchain, offline=offline)
+        return cls(path, imports=imports, toolchain=toolchain, offline=offline, options=options)
 
     # ── Registration ──
 
@@ -354,7 +367,7 @@ class LeanProject:
             targets = [
                 "+" + n for n in self._imports if not core.joinpath(*n.split(".")).with_suffix(".olean").exists()
             ]
-            prelude = "\n\n".join(block.source for block in self._blocks)
+            prelude = "\n\n".join([self._options] * bool(self._options) + [block.source for block in self._blocks])
             prelude += "\n" if prelude else ""
             with file_lock(self.root.with_suffix(".lock"), timeout=remaining()):
                 _workspace.sync(self._source, self.root, self._config)
@@ -388,7 +401,7 @@ class LeanProject:
 
     def _elaboration_error(self, reply: Mapping[str, Any]) -> LeanError:
         """Attribute each Lean error to the Python site that registered its block."""
-        starts, line = [], 1
+        starts, line = [], self._options.count("\n") + 3 if self._options else 1
         for block in self._blocks:
             starts.append(line)
             line += block.source.count("\n") + 2

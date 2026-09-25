@@ -276,7 +276,6 @@ In the example above, the tool returns a value. Some tools can also vouch for pr
 
 ```python
 from ai_functions.experimental.verified.function import Certified
-from ai_functions.experimental.verified.lean.types import encode
 
 
 @verified.tool(MIS.misSolver, stem="mis")
@@ -284,11 +283,10 @@ def mis_solver(graph: Graph) -> Certified:
     """Exact maximum-independent-set solver for graphs of at most 15 vertices."""
     ...  # refuse graphs above the cap, then solve
     size = exact_mis(verts, edges)
-    lean_graph = encode(graph, MIS.misSolver.info.parameters[0].type)
-    return Certified(size, guarantees=lambda value: f"MIS.MaxIndependentSize {lean_graph} {value}")
+    return Certified(size, guarantees=lambda value, graph: f"MIS.MaxIndependentSize {graph} {value}")
 ```
 
-`guarantees=` is a Lean proposition, a list of them, or a function that receives the returned value as Lean source and returns them. Each guarantee becomes one more fact (`H.mis1_contract1`), and is trusted as stated: it appears in the certificate as an assumption, just like the value itself. Only add guarantees your tool actually provides. The final `Certificate` records which of those claims the checked proof used.
+`guarantees=` is a Lean proposition, a list of them, or a function that receives the returned value and then the call's arguments as Lean source, and returns them. Each guarantee becomes one more fact (`H.mis1_contract1`), restated at the arguments as the agent wrote them (`H.mis1_contract1_as_written`), and is trusted as stated: it appears in the certificate as an assumption, just like the value itself. Only add guarantees your tool actually provides. The final `Certificate` records which of those claims the checked proof used.
 
 ## Judgments
 
@@ -389,6 +387,8 @@ project.symbols.Contract
 `project.symbols` names any declaration of the project, whether added inline or imported: `project.symbols.HR.DecisionCorrect` and `project.symbols["HR.DecisionCorrect"]` are the same declaration, and a namespace can be kept in a variable, as in `HR = project.symbols.HR`. Declarations must be registered before the project is first used, which in practice means at module level.
 
 Python DSL definitions, imported Lean modules, and `project.add` blocks can share a project. Inline Lean can refer to DSL definitions registered before it, including `vacation_decision` from the [DSL example](#python-dsl-for-policies). A verified function's contract, observation tools, and judgments must all belong to the same `LeanProject` instance. The toolchain and build-cache settings are described in [Getting started](#getting-started).
+
+Proofs that compute can exceed Lean's default limits; `LeanProject(options={"maxRecDepth": 100000})` raises them.
 
 ### Contract signatures
 

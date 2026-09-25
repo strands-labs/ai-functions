@@ -9,9 +9,8 @@ from typing import Literal
 from rich.console import Console
 
 from ..lean.server import Source
-from ..lean.types import RawLean
 
-type Guarantees = str | Sequence[str] | Callable[[RawLean], str | Sequence[str]]
+type Guarantees = str | Sequence[str] | Callable[..., str | Sequence[str]]
 
 
 @dataclass(frozen=True)

@@ -47,6 +47,8 @@ class Outcome:
     message: str
     code: str | None = None
     detail: str | None = None
+    excerpt: str | None = None
+    """What the model reads instead of ``code``, when ``code`` restates facts it already has."""
 
 
 class _Feedback(Exception):
@@ -155,6 +157,15 @@ def _apply(symbol: LeanSymbol, arguments: Sequence[str | Source]) -> Source:
     return Source.join(" ", [symbol.name, *("(" + a + ")" for a in arguments)])
 
 
+def _written(written: Sequence[str], literals: Sequence[str]) -> tuple[list[str], list[Source]] | None:
+    """The arguments as the model wrote them, as text and as confined model source; ``None`` if the literals."""
+    texts = [textwrap.dedent(text).strip() for text in written]
+    if texts == list(literals):
+        return None
+    # A line comment in model text would swallow the closing parenthesis.
+    return texts, [Source.model(t) if "--" not in t else "\n" + Source.model(t) + "\n" for t in texts]
+
+
 def _as_written(
     kind: Kind, axiom: str, symbol: LeanSymbol, written: Sequence[str], literals: Sequence[str], value: str
 ) -> tuple[Decl, str] | None:
@@ -162,14 +173,24 @@ def _as_written(
 
     ``None`` when the arguments are the literals. The proof is ``axiom``: the arguments reduce to the literals.
     """
-    texts = [textwrap.dedent(text).strip() for text in written]
-    if texts == list(literals):
+    if (restated := _written(written, literals)) is None:
         return None
-    # A line comment in model text would swallow the closing parenthesis.
-    arguments = [Source.model(t) if "--" not in t else "\n" + Source.model(t) + "\n" for t in texts]
+    texts, arguments = restated
     source = f"theorem {axiom}_as_written : " + _apply(symbol, arguments) + f" = {value} := {axiom}"
     shown = f"{axiom}_as_written : {_apply(symbol, texts).text} = {value}"
     return Decl(kind, f"{axiom}, restated at the arguments as written", source), shown
+
+
+_MARKER = "__ai_functions_argument{}__"
+
+
+def _splice(claim: str, arguments: Sequence[str | Source]) -> Source:
+    """``claim`` with each argument marker replaced by that argument, parenthesized."""
+    parts = re.split(r"__ai_functions_argument(\d+)__", claim)
+    pieces: list[str | Source] = [parts[0]]
+    for index, text in zip(parts[1::2], parts[2::2], strict=True):
+        pieces += ["(", arguments[int(index)], ")", text]
+    return Source.join("", pieces)
 
 
 def _check_opaque(symbol: LeanSymbol, *, judged: bool = False) -> None:
@@ -428,6 +449,8 @@ class ProofSession:
             raise LeanError("Lean returned an incomplete evaluation")
         decoded = []
         for (label, expression, lean_type), value in zip(slots, values, strict=True):
+            if isinstance(value, dict):
+                raise _Feedback(f"{label}: reducing `{expression}` failed: {value['error']}")
             if value is None:
                 raise _Feedback(
                     f"{label}: `{expression}` does not reduce to a closed value. Use a literal or transparent "
@@ -470,25 +493,43 @@ class ProofSession:
             return Outcome(True, f"Already observed as {prior.name}; reuse {next(iter(prior.axioms))}.")
         name = self.fresh(stem)
         typed = f"({literal} : {render_type(info.result)})"
-        claims = guarantees(RawLean(typed)) if callable(guarantees) else guarantees
+        # A builder sees each argument as a marker, so its claims can be stated at the
+        # literals, which the axioms use, and again at the arguments as written.
+        markers = [RawLean(_MARKER.format(i)) for i in range(len(args))]
+        claims = guarantees(RawLean(typed), *markers) if callable(guarantees) else guarantees
         claims = () if claims is None else (claims,) if isinstance(claims, str) else tuple(claims)
         if not all(isinstance(claim, str) for claim in claims):
             raise LeanError("Tool guarantees must be Lean proposition strings")
         axioms = {f"{name}_spec": f"{_apply(symbol, args).text} = {typed}"}
-        axioms.update((f"{name}_contract{i}", claim) for i, claim in enumerate(claims, 1))
+        axioms.update((f"{name}_contract{i}", _splice(claim, args).text) for i, claim in enumerate(claims, 1))
         call = f"{origin} -> {literal}"
         decls = [Decl("provenance", call, source := f"def {name} : {render_type(info.result)} := {literal}", source)]
         for i, (axiom, proposition) in enumerate(axioms.items()):
             kind: Kind = "guarantee" if i else "provenance"
             decls.append(Decl(kind, call, source := f"axiom {axiom} : {proposition}", source))
         message = f"Recorded {name}, with {', '.join(axioms)}."
-        if written is not None and (
-            restated := _as_written("provenance", f"{name}_spec", symbol, written, args, typed)
-        ):
-            decls.insert(2, restated[0])
-            message = f"Recorded {restated[1]}\n{message}"
+        excerpt = None
+        if written is not None and (forms := _written(written, args)):
+            spec = _as_written("provenance", f"{name}_spec", symbol, written, args, typed)
+            assert spec is not None
+            # Restate each fact at the arguments as written, after the literal one it is proved
+            # from; the model then reads those, and not the literals, which may be large.
+            texts, sources = forms
+            lines = [f"Recorded {spec[1]}"]
+            decls.append(spec[0])
+            for i, claim in enumerate(claims, 1):
+                axiom = f"{name}_contract{i}"
+                if "__ai_functions_argument" not in claim:
+                    lines.append(f"Recorded {axiom} : {claim}")
+                    continue
+                source = f"theorem {axiom}_as_written : " + _splice(claim, sources) + f" := {axiom}"
+                decls.append(Decl("guarantee", f"{axiom}, restated at the arguments as written", source))
+                lines.append(f"Recorded {axiom}_as_written : {_splice(claim, texts).text}")
+            message = "\n".join([*lines, message])
+            excerpt = Source.of(decls[0].source).text
+        code = "\n\n".join(Source.of(d.source).text for d in decls)
         self._commit(decls, Observation(name, "tool", symbol.name, args, literal, origin, MappingProxyType(axioms)))
-        return Outcome(True, message, code="\n\n".join(Source.of(d.source).text for d in decls))
+        return Outcome(True, message, code=code, excerpt=excerpt)
 
     @_operation
     def judge(self, symbol: str, arguments: Sequence[str], value: str, justification: str) -> Outcome:
@@ -579,6 +620,8 @@ class ProofSession:
         [shape] = result.raw["types"]
         lean_type = type_from_json(shape["type"], shape["type_str"])
         problem = _unshowable(lean_type)
+        if problem is None and isinstance(values[0], dict):
+            problem = f"Reducing the term failed: {values[0]['error']}"
         if problem is None and values[0] is None:
             problem = (
                 "The term does not reduce to a closed value: it depends on an opaque symbol, "

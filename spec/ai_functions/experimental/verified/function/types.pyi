@@ -8,13 +8,14 @@ from typing import Literal
 from rich.console import Console
 
 from ..lean.server import Source
-from ..lean.types import RawLean
 
-type Guarantees = str | Sequence[str] | Callable[[RawLean], str | Sequence[str]]
+type Guarantees = str | Sequence[str] | Callable[..., str | Sequence[str]]
 """Lean propositions a tool asserts about one returned value.
 
-A builder receives the value as a typed Lean term. Each proposition becomes an
-axiom ``<observation>_contract<i>``.
+A builder receives the value as a typed Lean term, then each argument of the call
+as a Lean term. Each proposition becomes an axiom ``<observation>_contract<i>``,
+stated at the argument literals, and is restated at the arguments as the model
+wrote them.
 """
 
 @dataclass(frozen=True)
