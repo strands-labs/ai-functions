@@ -499,6 +499,7 @@ The examples in `examples/verified/` are complete and runnable, with their Lean 
 - `access.py`: a data-export decision proved from complete directory and grant records; the allow and the deny are both proved, the deny because the only live delegation chain is one hop too long.
 - `audit.py`: auditing a paginated settlement ledger, where the agent writes the checking programs and proves them equivalent to a specification that does not compute; the flag list is sound and complete, and the balance never goes negative.
 - `mis.py`: a maximum independent set of a graph too large for a size-capped solver, whose results carry guarantees via `Certified`; the agent reduces the graph and uses the solver on the pieces.
+- `polysolve.py`: counting the solutions of a polynomial system too big for msolve's time budget; the agent eliminates a variable in Lean, has msolve count the smaller system, and proves the elimination kept the solutions. Needs [msolve](https://msolve.lip6.fr).
 - `payout.py`: a compiled function computing the largest affordable payout, with its contract written in Python.
 - `lower_bound.py`: a compiled sorted-list search, from a contract written in Lean.
 
