@@ -1,6 +1,6 @@
 name = "verified_examples"
 version = "0.1.0"
-defaultTargets = ["HR", "LeavePolicy", "Access", "Audit", "MIS", "Lookup"]
+defaultTargets = ["HR", "LeavePolicy", "Access", "Audit", "MIS", "Lookup", "PolySolve"]
 
 [[lean_lib]]
 name = "HR"
@@ -19,3 +19,6 @@ name = "MIS"
 
 [[lean_lib]]
 name = "Lookup"
+
+[[lean_lib]]
+name = "PolySolve"
