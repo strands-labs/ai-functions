@@ -8,7 +8,7 @@ Invariants:
     V4, V6.
 """
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, overload
@@ -165,7 +165,8 @@ class LeanProject:
         may be retried.
 
     Invariants:
-        - The prelude is the registered blocks in registration order.
+        - The prelude is the ``options`` as ``set_option`` commands, then the
+          registered blocks in registration order.
         - A DSL definition appears after every definition it references.
     """
 
@@ -177,6 +178,7 @@ class LeanProject:
         toolchain: LeanConfig | None = None,
         lean_toolchain: str | None = None,
         offline: bool = False,
+        options: Mapping[str, bool | int] | None = None,
     ) -> None:
         """Describe a project; performs no Lean, network or filesystem-writing work.
 
@@ -186,10 +188,13 @@ class LeanProject:
             toolchain: Provisioning configuration; defaults to ``LeanConfig()``.
             lean_toolchain: Release pin when ``path`` is ``None``.
             offline: Forbid downloading tools and Lake dependencies.
+            options: Lean options, such as ``{"maxRecDepth": 100000}``, set with
+                ``set_option`` at the top of the prelude, and so in every certificate.
 
         Raises:
-            ValueError: ``path`` is given without ``imports``, or a module name is
-                not a Lean name.
+            ValueError: ``path`` is given without ``imports``, a module name is
+                not a Lean name, or an option name is not a Lean name or its value
+                is neither a ``bool`` nor a nonnegative ``int``.
             LeanSetupError: ``path`` lacks a lakefile or ``lean-toolchain``, or
                 ``lean_toolchain`` differs from the project's pin.
         """
@@ -204,6 +209,7 @@ class LeanProject:
         imports: Sequence[str],
         toolchain: LeanConfig | None = None,
         offline: bool = False,
+        options: Mapping[str, bool | int] | None = None,
     ) -> LeanProject:
         """Open a project shipped as data inside an importable Python package.
 

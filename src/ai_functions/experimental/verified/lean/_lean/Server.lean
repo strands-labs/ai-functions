@@ -33,8 +33,11 @@ open Lean Elab Meta
 def options : Options :=
   ({} : Options).setBool `Elab.async false
 
-def runMeta (env : Environment) (x : MetaM α) : IO α := do
-  let ctx : Core.Context := { fileName := "<ltx>", fileMap := default, options }
+/-- Run `x` under `opts`: the committed scope's options, so the project's `set_option`s
+bound reduction here as they do elaboration. -/
+def runMeta (env : Environment) (x : MetaM α) (opts : Options := options) : IO α := do
+  let ctx : Core.Context :=
+    { fileName := "<ltx>", fileMap := default, options := opts, maxRecDepth := maxRecDepth.get opts }
   return (← x.run'.toIO ctx { env }).1
 
 def get [FromJson α] (req : Json) (key : String) : IO α :=
@@ -124,12 +127,14 @@ partial def fragToJson (e : Expr) : MetaM (Option Json) := do
       else return none
     | _ => return none
 
-/-- The value of constant `n` reduced to fragment JSON, `null` when stuck or absent. -/
-def evalConst (env : Environment) (n : Name) : IO Json := do
+/-- The value of constant `n` reduced to fragment JSON, `null` when stuck or absent, and
+`{"error": text}` when reduction fails, for example on a resource limit. -/
+def evalConst (env : Environment) (opts : Options) (n : Name) : IO Json := do
   let some info := env.find? n | return .null
   let some value := info.value? | return .null
   if info matches .opaqueInfo _ then return .null
-  try return (← runMeta env (fragToJson value)).getD .null catch _ => return .null
+  try return (← runMeta env (fragToJson value) opts).getD .null
+  catch e => return Json.mkObj [("error", toString e)]
 
 def constType (env : Environment) (n : Name) : IO Json := do
   let some info := env.find? n | return .null
@@ -149,7 +154,7 @@ def closedTerm (base st : Command.State) (source : String) (model : AIFunctionsC
   let some info := new.env.find? name | return errorReply s!"Unknown declaration: {name}"
   let some value := info.value? | return errorReply s!"{name} has no value"
   let declared (n : Name) := !base.env.contains n
-  let (type, text) ← runMeta new.env <| withOptions (·.setBool `pp.fullNames true) do
+  let (type, text) ← runMeta (opts := new.scopes.head!.opts) new.env <| withOptions (·.setBool `pp.fullNames true) do
     let print (e : Expr) : MetaM String := return (← ppExpr (← deltaExpand e declared)).pretty 1000000
     return (← print info.type, ← print value)
   let head := s!"def {name} : {type} :=\n"
@@ -205,7 +210,7 @@ def session (ref base : IO.Ref (Option Command.State)) (req : Json) : IO Json :=
     let (new, reply) ← process st (← get req "source") (← getOr req "model")
     if reply.getObjValD "ok" != true then return reply
     let names : Array String ← get req "names"
-    let values ← names.mapM (evalConst new.env ·.toName)
+    let values ← names.mapM (evalConst new.env new.scopes.head!.opts ·.toName)
     let types ← names.mapM (constType new.env ·.toName)
     return (reply.setObjVal! "values" (Json.arr values)).setObjVal! "types" (Json.arr types)
   | "closed" =>

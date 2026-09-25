@@ -59,6 +59,8 @@ class Outcome:
     message: str
     code: str | None = None
     detail: str | None = None
+    excerpt: str | None = None
+    """What the model reads instead of ``code``, when ``code`` restates facts it already has."""
 
 class ProofSession:
     """One ledger over a prepared project, owned and closed by its consumer.

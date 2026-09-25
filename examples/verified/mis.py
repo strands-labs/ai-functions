@@ -26,7 +26,6 @@ from ai_functions.cli import print_event
 from ai_functions.experimental import verified
 from ai_functions.experimental.verified.function import Certified
 from ai_functions.experimental.verified.lean import LeanProject
-from ai_functions.experimental.verified.lean.types import encode
 
 project = LeanProject(Path(__file__).parent / "lean", imports=["MIS"])
 MIS = project.symbols.MIS
@@ -71,9 +70,8 @@ def mis_solver(graph: Graph) -> Certified:
             raise ValueError(f"self-loop {(u, v)!r} not accepted")
     size = exact_mis(verts, edges)
     # The claim, made where it is earned: this size is optimal for exactly the
-    # graph the solver was just run on. `value` is the returned size as Lean source.
-    lean_graph = encode(graph, MIS.misSolver.info.parameters[0].type)
-    return Certified(size, guarantees=lambda value: f"MIS.MaxIndependentSize {lean_graph} {value}")
+    # graph the solver was just run on. `value` and `graph` arrive as Lean source.
+    return Certified(size, guarantees=lambda value, graph: f"MIS.MaxIndependentSize {graph} {value}")
 
 
 # The contract `MIS.Contract size verts edges` is about the whole instance, a
