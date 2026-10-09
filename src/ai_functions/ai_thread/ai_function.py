@@ -11,6 +11,7 @@ import tstr
 from strands.tools import ToolProvider
 from strands.tools.decorator import tool as _strands_tool  # pyright: ignore[reportUnknownVariableType]
 from strands.types.tools import AgentTool
+from tstr import Template
 
 from ..handle import ThreadHandle
 from ..protocols import Spawnable
@@ -84,6 +85,29 @@ def _infer_input_shape(prompt_fn: Callable[..., Any]) -> InputShape:  # pyright:
     return InputShape.STRUCTURED
 
 
+def _render_template(template: Template) -> str:
+    """Render ``template`` as a prompt: dedented, with leading and trailing newlines stripped.
+
+    Interpolations honor their conversion and format spec. A multi-line value
+    whose placeholder is preceded only by whitespace on its line has its
+    continuation lines indented to the placeholder's column. Nested
+    ``Template`` values are rendered the same way.
+    """
+    template = tstr.dedent(template)
+    out = [template.strings[0]]
+    for interp, string in zip(template.interpolations, template.strings[1:], strict=True):
+        value = interp.value
+        if isinstance(value, Template):
+            value = _render_template(value)
+        rendered = format(tstr.convert(value, interp.conversion), interp.format_spec)
+        line_prefix = "".join(out).rpartition("\n")[2]
+        indent = line_prefix if line_prefix.isspace() else ""
+        first, *rest = rendered.split("\n")
+        out.append("\n".join([first, *(indent + line if line.strip() else line for line in rest)]))
+        out.append(string)
+    return "".join(out).strip("\n")
+
+
 @final
 class AIFunction[**P, T](ToolProvider, Spawnable[P, T]):
     """Immutable AI function template; factory for ``AIThread`` instances.
@@ -110,11 +134,11 @@ class AIFunction[**P, T](ToolProvider, Spawnable[P, T]):
 
     def __init__(
         self,
-        prompt_fn: Callable[P, str | None],
+        prompt_fn: Callable[P, str | Template | None],
         output_type: type[T],
         config: ThreadConfig,
     ) -> None:
-        self._prompt_fn: Callable[P, str | None] = prompt_fn
+        self._prompt_fn: Callable[P, str | Template | None] = prompt_fn
         self._output_type: type[T] = output_type
         self._config: ThreadConfig = config
         self._executor: object = None
@@ -138,7 +162,7 @@ class AIFunction[**P, T](ToolProvider, Spawnable[P, T]):
         return self._output_type
 
     @property
-    def prompt_fn(self) -> Callable[P, str | None]:
+    def prompt_fn(self) -> Callable[P, str | Template | None]:
         """The user-provided prompt builder."""
         return self._prompt_fn
 
@@ -163,22 +187,34 @@ class AIFunction[**P, T](ToolProvider, Spawnable[P, T]):
 
         Raises:
             AIFunctionError: ``prompt_fn`` returned ``None`` and has no
-                docstring to use as a template.
+                docstring to use as a template, or returned something other
+                than ``str``, ``Template``, or ``None``.
 
         Strategy:
             1. Call ``self.prompt_fn(*args, **kwargs)``; if it is a coroutine,
                await it (``async def`` prompt bodies are supported).
-            2. If ``prompt_fn`` returns ``None``, interpret its docstring as a
-               ``tstr`` template and interpolate it with the bound arguments
-               and the function's globals as context.
+            2. A ``str`` result is the prompt as-is. A ``Template`` result
+               (a t-string on Python 3.14+) is dedented, rendered with
+               multi-line values indented to their placeholder's column, and
+               stripped of leading and trailing newlines.
+            3. If ``prompt_fn`` returns ``None``, interpret its docstring as a
+               ``tstr`` template, interpolate it with the bound arguments and
+               the function's globals as context, and render it as in step 2.
         """
         result = self._prompt_fn(*args, **kwargs)
         if inspect.iscoroutine(result):
             result = await result
-        if result is not None:
+        if isinstance(result, str):
             return result
+        if isinstance(result, Template):
+            return _render_template(result)
+        if result is not None:
+            raise AIFunctionError(
+                f"prompt_fn must return str, Template, or None, got {type(result).__name__}",
+                function_name=self._name,
+            )
 
-        doc = self._prompt_fn.__doc__
+        doc = self._doc
         if not doc:
             raise AIFunctionError(
                 "prompt_fn returned None and has no docstring to use as a template",
@@ -201,7 +237,7 @@ class AIFunction[**P, T](ToolProvider, Spawnable[P, T]):
         # variable names. The template is the function's own docstring (trusted
         # author-supplied text), interpolated with the call's bound arguments.
         template = tstr.generate_template(doc, context, globals=fn_globals, use_eval=True)  # pyright: ignore[reportUnknownMemberType]
-        return tstr.render(template)
+        return _render_template(template)
 
     # ── Spawnable ──
 
@@ -531,26 +567,26 @@ class _TypedDecorator[T]:
         self._config: ThreadConfig = config
 
     @overload
-    def __call__[**P](self, prompt_fn: Callable[P, str | None], /) -> AIFunction[P, T]: ...
+    def __call__[**P](self, prompt_fn: Callable[P, str | Template | None], /) -> AIFunction[P, T]: ...
     @overload
     def __call__[**P](
         self,
         *,
         config: ThreadConfig | None = None,
         **kwargs: Unpack[ThreadMergedKwargs],
-    ) -> Callable[[Callable[P, str | None]], AIFunction[P, T]]: ...
+    ) -> Callable[[Callable[P, str | Template | None]], AIFunction[P, T]]: ...
     def __call__[**P](  # type: ignore[misc]  # overload implementation not visible to checker
         self,
-        prompt_fn: Callable[P, str | None] | None = None,
+        prompt_fn: Callable[P, str | Template | None] | None = None,
         /,
         *,
         config: ThreadConfig | None = None,
         **kwargs: Unpack[ThreadMergedKwargs],
-    ) -> AIFunction[P, T] | Callable[[Callable[P, str | None]], AIFunction[P, T]]:
+    ) -> AIFunction[P, T] | Callable[[Callable[P, str | Template | None]], AIFunction[P, T]]:
         base = config if config is not None else self._config
         merged = _merge_config(base, **kwargs)
 
-        def _decorator(fn: Callable[P, str | None]) -> AIFunction[P, T]:
+        def _decorator(fn: Callable[P, str | Template | None]) -> AIFunction[P, T]:
             return AIFunction(fn, self._output_type, merged)
 
         if prompt_fn is not None:
@@ -612,7 +648,7 @@ class _AIFunctionFactory:
             output = _infer_output_type(fn)
             # ``fn`` builds the prompt (returns ``str | None``); its return
             # annotation names the output type, so the cast is intentional.
-            return AIFunction(cast("Callable[P, str | None]", fn), output, merged)
+            return AIFunction(cast("Callable[P, str | Template | None]", fn), output, merged)
 
         if prompt_fn is not None:
             return _decorator(prompt_fn)
