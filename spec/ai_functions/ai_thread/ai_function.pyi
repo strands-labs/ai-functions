@@ -6,6 +6,7 @@ from typing import Any, Callable, Hashable, Sequence, Unpack, final, overload, o
 
 from strands.tools import ToolProvider
 from strands.types.tools import AgentTool
+from tstr import Template
 
 from ..protocols import Spawnable
 from ..handle import ThreadHandle
@@ -33,7 +34,7 @@ class AIFunction[**P, T](ToolProvider, Spawnable[P, T]):
 
     def __init__(
         self,
-        prompt_fn: Callable[P, str | None],
+        prompt_fn: Callable[P, str | Template | None],
         output_type: type[T],
         config: ThreadConfig,
     ) -> None: ...
@@ -54,7 +55,7 @@ class AIFunction[**P, T](ToolProvider, Spawnable[P, T]):
         ...
 
     @property
-    def prompt_fn(self) -> Callable[P, str | None]:
+    def prompt_fn(self) -> Callable[P, str | Template | None]:
         """The user-provided prompt builder."""
         ...
 
@@ -74,7 +75,15 @@ class AIFunction[**P, T](ToolProvider, Spawnable[P, T]):
 
         Raises:
             AIFunctionError: ``prompt_fn`` returned ``None`` and has no
-                docstring to use as a template.
+                docstring to use as a template, or returned something other
+                than ``str``, ``Template``, or ``None``.
+
+        Ensures:
+            - A ``str`` result is returned as-is.
+            - A ``Template`` result, or the docstring template when
+              ``prompt_fn`` returns ``None``, is dedented, rendered with
+              multi-line values indented to their placeholder's column, and
+              stripped of leading and trailing newlines.
         """
         ...
 
@@ -284,22 +293,22 @@ class _TypedDecorator[T]:
 
     def __init__(self, output_type: type[T], config: ThreadConfig) -> None: ...
     @overload
-    def __call__[**P](self, prompt_fn: Callable[P, str | None], /) -> AIFunction[P, T]: ...
+    def __call__[**P](self, prompt_fn: Callable[P, str | Template | None], /) -> AIFunction[P, T]: ...
     @overload
     def __call__[**P](
         self,
         *,
         config: ThreadConfig | None = None,
         **kwargs: Unpack[ThreadMergedKwargs],
-    ) -> Callable[[Callable[P, str | None]], AIFunction[P, T]]: ...
+    ) -> Callable[[Callable[P, str | Template | None]], AIFunction[P, T]]: ...
     def __call__[**P](  # type: ignore[misc]
         self,
-        prompt_fn: Callable[P, str | None] | None = None,
+        prompt_fn: Callable[P, str | Template | None] | None = None,
         /,
         *,
         config: ThreadConfig | None = None,
         **kwargs: Unpack[ThreadMergedKwargs],
-    ) -> AIFunction[P, T] | Callable[[Callable[P, str | None]], AIFunction[P, T]]: ...
+    ) -> AIFunction[P, T] | Callable[[Callable[P, str | Template | None]], AIFunction[P, T]]: ...
 
 
 @final
