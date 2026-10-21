@@ -105,6 +105,9 @@ your own workflow thread.
 | [Research team](workflows/research_team.py) | Delegate research, planning, and critique through tools. | `uv run workflows/research_team.py` | `EXA_API_KEY` or `TAVILY_API_KEY`. |
 | [Custom workflow](workflows/custom_workflow.py) | Implement a plain Python workflow as a spawnable thread. | `uv run workflows/custom_workflow.py` | None. |
 
+For the experimental graph viewer and workflow-generation skill, see
+the [Graphs project](projects/graphs/README.md).
+
 ## Threads
 
 Keep conversation state, manage thread lifecycles, and connect workers.
@@ -201,6 +204,7 @@ Larger demonstrations with multiple training steps, datasets, or extra setup.
 
 | Project | What it teaches | Run | Extra setup |
 | --- | --- | --- | --- |
+| [Graphs](projects/graphs/README.md) | Have your coding assistant build and run a graph of agents with checked conditions, then inspect the recorded run in a terminal viewer. | See its Quick Start. | Its own dependencies; a coding assistant and at least one agent backend, such as Kiro or Claude Code. |
 | [SciPy learning](projects/scipy_learning.py) | Train on bundled problems and compare code generation before and after learning. | `uv run projects/scipy_learning.py` | None beyond the shared environment; runs several model calls. |
 | [Looped threads](projects/looped_threads/README.md) | Repeatedly edit, execute, and evaluate a house-price predictor. | `(cd projects/looped_threads && uv run main.py)` | Its own dependencies; downloads the dataset on first use. |
 | [SkillsBench](projects/skillsbench/README.md) | Improve an external agent's workflow memory using benchmark feedback. | See its README for the setup and command with `--skillsbench`. | SkillsBench checkout, Claude Code, additional Python packages, and `pdftotext`. |

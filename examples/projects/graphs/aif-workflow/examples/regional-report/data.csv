@@ -1,0 +1,11 @@
+date,region,product,units,unit_price
+2026-01-04,north,widget,12,19.99
+2026-01-05,south,widget,7,19.99
+2026-01-06,north,gizmo,3,149.50
+2026-01-08,east,widget,21,19.99
+2026-01-11,south,gizmo,1,149.50
+2026-01-12,north,widget,9,19.99
+2026-01-15,east,doohickey,40,4.25
+2026-01-19,south,doohickey,15,4.25
+2026-01-22,north,gizmo,2,149.50
+2026-01-28,east,widget,6,19.99

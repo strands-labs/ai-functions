@@ -1,0 +1,48 @@
+[project]
+name = "ai-functions-graphs-example"
+version = "0.1.0"
+description = "Experimental workflow skills and a terminal graph viewer."
+requires-python = ">=3.12"
+dependencies = [
+    "strands-ai-functions",
+    "pydantic>=2.4,<3",
+    "rich>=13.7",
+    "textual>=0.70",
+    "typer>=0.18.0",
+]
+
+[project.optional-dependencies]
+kiro = ["strands-ai-functions[kiro]"]
+claude = ["strands-ai-functions[claude-code]"]
+codex = ["strands-ai-functions[codex]"]
+ai-thread = ["strands-agents-tools"]
+
+[dependency-groups]
+dev = [
+    "pytest>=7",
+    "pytest-asyncio>=0.21",
+    "ruff>=0.1",
+]
+
+# Run the scripts directly; this example does not install its own package.
+[tool.uv]
+package = false
+
+# An independent environment without adding a member to the root workspace.
+[tool.uv.workspace]
+members = []
+
+[tool.uv.sources]
+strands-ai-functions = { path = "../../..", editable = true }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+asyncio_mode = "auto"
+filterwarnings = [
+    "ignore:websockets\\.legacy is deprecated:DeprecationWarning:websockets.legacy",
+]
+
+[tool.ruff]
+extend = "../../../pyproject.toml"
+include = ["**/*.py"]
