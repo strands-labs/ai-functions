@@ -129,3 +129,7 @@ ai_functions.experimental.verified.function.types.Guarantees
 ai_functions.experimental.verified.dsl.translate
 # Definitions are made only by a project's decorators; the constructor is private.
 ai_functions.experimental.verified.dsl.definitions.Definition.__init__
+
+# ``Conflict = Literal["last_writer_wins", "merge", "refuse"]``: same Literal-alias false positive as
+# runtime.coordinator_tools_core.SendMessageMode.
+ai_functions.experimental.params.local.Conflict

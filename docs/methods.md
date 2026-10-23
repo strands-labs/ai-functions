@@ -222,6 +222,8 @@ await TextGradOptimizer().step(result, "The choice ignored the missing document.
 
 The marked parameter stays in the tool schema, so a peer agent that calls the method as a tool supplies the value itself. A value you pass to `trace` by keyword is used as is, and nothing is retrieved for it. `trace` raises `RecallWiringError` before any retrieval or model call when a search has no query, a query names a parameter that won't be retrieved, a positional argument would land on a marked parameter, or the method has a parameter named `queries` or `overrides`. It raises `CompilationError`, also before any retrieval, when the method isn't an `@ai_method`.
 
+To train a value that lives in the process instead of in a memory backend, mark the parameter `Trainable`; see [Local parameters](params.md).
+
 ## Errors
 
 Every error in the module subclasses `MethodError`, an `AIFunctionError` whose `function_name` names the agent or method that raised it.

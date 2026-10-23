@@ -123,6 +123,10 @@ class TextGradOptimizer:
               ``backend.consolidate`` call carrying all of that parameter's
               gradients across the graph, plus the merged retrieval context
               (``None`` when no grouped node carries ``meta["results"]``).
+            - A host that is a ``VersionedParameterHost`` (it has ``load``)
+              also receives ``expected_version``, the oldest ``meta["version"]``
+              the graph read for that parameter; a host without ``load`` is
+              called with the plain ``ParameterHost`` signature.
             - Parameters with no gradients are skipped.
         """
         ...

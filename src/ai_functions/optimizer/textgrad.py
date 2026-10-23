@@ -24,7 +24,7 @@ from ..ai_thread import ai_function
 from ..ai_thread.errors import AIFunctionError
 from ..ai_thread.postcondition import PostConditionResult
 from ..types.context import no_thread_scope
-from ..types.graph import GradFeedback, Node, ParameterNode, ThreadNode
+from ..types.graph import GradFeedback, Node, ParameterNode, ThreadNode, VersionedParameterHost
 from ._graph import build_graph_from_result, leads_to_grad_parameter, topological_sort
 from .rendering import render_inputs, render_messages
 
@@ -275,27 +275,41 @@ class TextGradOptimizer:
         ``{entry_id: value}`` mapping of the entries the forward pass actually
         retrieved) is merged across the group and passed along, so a backend
         can target consolidation at those entries instead of the full value.
+
+        A host that is a :class:`~ai_functions.types.graph.VersionedParameterHost`
+        (it has ``load``) also receives ``expected_version``: the oldest
+        ``meta["version"]`` the graph read for that parameter, so the host's own
+        conflict policy sees any write that happened under the graph. A host
+        without ``load`` is called with the plain ``ParameterHost`` signature.
         """
-        grouped: dict[tuple[int, str], tuple[ParameterNode, list[GradFeedback], dict[str, str]]] = {}
+        grouped: dict[tuple[int, str], tuple[ParameterNode, list[GradFeedback], dict[str, str], list[int]]] = {}
         for node in topological_sort(root):
             for p in node.parameters:
                 if not p.gradients or p.backend is None:
                     continue
                 key = (id(p.backend), p.name)
                 if key not in grouped:
-                    grouped[key] = (p, [], {})
+                    grouped[key] = (p, [], {}, [])
                 grouped[key][1].extend(p.gradients)
                 results = p.meta.get("results")  # pyright: ignore[reportAny]
                 if isinstance(results, dict):
                     grouped[key][2].update({str(k): str(v) for k, v in results.items()})  # pyright: ignore[reportUnknownArgumentType, reportUnknownVariableType]
+                version = p.meta.get("version")  # pyright: ignore[reportAny]
+                if isinstance(version, int) and not isinstance(version, bool):
+                    grouped[key][3].append(version)
 
         # One consolidate per (backend, parameter). A text-rewriting backend
         # reads each gradient's text; a score-learning host (the economics
-        # beliefs adapter) reads the scores and settles its records. Both are
-        # ``consolidate`` calls matched by ``backend_id`` — no separate hook.
-        for (_, param_name), (param, feedbacks, retrieved) in grouped.items():
-            assert param.backend is not None
-            param.backend.consolidate(param_name, feedbacks, retrieved=retrieved or None)
+        # beliefs adapter) reads the scores and settles its records; a versioned
+        # host (a local parameter) also checks the version the graph read. All
+        # are ``consolidate`` calls matched by ``backend_id`` — no separate hook.
+        for (_, param_name), (param, feedbacks, retrieved, versions) in grouped.items():
+            host = param.backend
+            assert host is not None
+            if versions and isinstance(host, VersionedParameterHost):
+                host.consolidate(param_name, feedbacks, retrieved=retrieved or None, expected_version=min(versions))
+            else:
+                host.consolidate(param_name, feedbacks, retrieved=retrieved or None)
 
     def zero_grad(self, root: ThreadNode) -> None:
         """Clear all node and parameter gradients in the graph."""

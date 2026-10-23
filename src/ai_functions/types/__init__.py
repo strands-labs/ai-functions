@@ -39,7 +39,16 @@ from .events import (
     TraceDelegationEvent,
     is_renderable_event,
 )
-from .graph import GradFeedback, ParameterHost, ParameterView, Result, Traceable, collect_nodes, unwrap_nodes
+from .graph import (
+    GradFeedback,
+    ParameterHost,
+    ParameterView,
+    Result,
+    Traceable,
+    VersionedParameterHost,
+    collect_nodes,
+    unwrap_nodes,
+)
 from .ids import EventId, MessageId, ThreadId, WorkerId
 from .policy import Policy
 from .status import InputShape, ThreadInfo, ThreadStatus
@@ -86,6 +95,7 @@ __all__ = [
     "ToolResultEvent",
     "TraceDelegationEvent",
     "Traceable",
+    "VersionedParameterHost",
     "WorkerId",
     "collect_nodes",
     "current_thread_scope",

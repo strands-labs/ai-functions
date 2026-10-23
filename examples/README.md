@@ -61,6 +61,7 @@ Lean automatically; see [Verified](#verified) for native compilation setup.
 | Remember information and improve results from feedback       | [Memory](#memory) |
 | Choose models according to cost and expected success         | [Economics](#economics) |
 | Give an object AI methods and hand them to other agents      | [Methods](#methods) |
+| Learn a value on a function's signature from feedback        | [Params](#params) |
 | Use Claude Code or Kiro as a thread                          | [Integrations](#integrations) |
 | Verify the agent's work or compile a verified implementation | [Verified](#verified) |
 | Explore a larger learning loop or benchmark                  | [Projects](#projects) |
@@ -166,6 +167,15 @@ with a gate. See [the methods guide](../docs/methods.md).
 | --- | --- | --- |
 | [Analyst team](methods/analyst_team.py) | Call a method once, hand every method to an orchestrator as a typed tool, and keep one method on a live thread. | `uv run methods/analyst_team.py` |
 | [Gated proposer](methods/gated_proposer.py) | Check each proposal against a policy cap, retry with the gate's report, and filter one-shot proposals from forked threads. | `uv run methods/gated_proposer.py` |
+
+## Params
+
+Mark a parameter on a function's signature as trainable, so its default learns
+from feedback and keeps a version. See [the local parameters guide](../docs/params.md).
+
+| Example | What it teaches | Run |
+| --- | --- | --- |
+| [Trainable guidelines](params/trainable_guidelines.py) | Learn a house rule into a reply's guidelines from one piece of feedback, then save and restore what was learned. | `uv run params/trainable_guidelines.py` |
 
 ## Integrations
 

@@ -474,6 +474,31 @@ def postmortem(incident: str) -> str:
 
 A method can also run on a live thread whose calls share history, have its proposals checked by a gate that runs as its post-condition, or read memory that the optimizer can update. See the [methods documentation](docs/methods.md) for details.
 
+## Local Parameters
+
+The `ai_functions.experimental.params` module makes a value on a function's signature trainable without a memory backend. Mark a parameter `Trainable`, and its default becomes the initial value of a parameter that `TextGradOptimizer` updates from feedback; `Bind` keeps the value in a `Local` host in your process (see `examples/params/trainable_guidelines.py`):
+
+```python
+from typing import Annotated
+
+from ai_functions.experimental.params import Bind, Trainable
+
+
+@ai_function
+def reply(ticket: str, guidelines: Annotated[str, Trainable()] = "Thank the customer.") -> str:
+    """Follow these guidelines: {guidelines}
+
+    Write the reply to this support ticket: {ticket}
+    """
+
+
+bound = Bind(reply)
+result = await bound.trace(ticket=ticket)
+await TextGradOptimizer().step(result, "End every reply with the case reference.", backends=[bound.local])
+```
+
+Feedback is combined by a reducer declared per parameter, with no model call: text appends in order and numbers add. Every write bumps the parameter's version, and a conflict policy decides what a write against a stale version does. `Trainable` works on `@ai_method` parameters too. See the [local parameters documentation](docs/params.md) for details.
+
 ## Security
 
 Code execution is off by default. The `"local"` mode validates generated code with AST checks, restricts imports to the allowlist you pass in, and applies timeouts. But it is not a sandbox: it cannot stop resource exhaustion (an infinite loop, runaway memory allocation) and offers no process-level isolation. For production, run AI Functions inside a container or other isolated environment, which adds the process isolation and resource limits that `"local"` mode cannot provide. For untrusted input, use `"disabled"` mode.

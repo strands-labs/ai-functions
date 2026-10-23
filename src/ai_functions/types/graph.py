@@ -64,6 +64,34 @@ class ParameterHost(Protocol):
         ...
 
 
+@runtime_checkable
+class VersionedParameterHost(ParameterHost, Protocol):
+    """A :class:`ParameterHost` whose parameters carry a version, so a stale write can be detected.
+
+    The optional seam a host opts into by having ``load``. A view such a host hands out records
+    the version it read in ``meta["version"]``; the optimizer's ``consolidate`` reads the oldest
+    version the graph read for each parameter and passes it back as ``expected_version``, and the
+    host applies its own conflict policy. A host without ``load`` is called with the plain
+    :class:`ParameterHost` signature and never sees a version. The local parameter host
+    (``experimental/params``) is the reference implementation; a memory backend is not versioned.
+    """
+
+    def load(self, name: str) -> tuple[Any, int]:  # pyright: ignore[reportExplicitAny]
+        """The current value and its version."""
+        ...
+
+    def consolidate(  # pyright: ignore[reportIncompatibleMethodOverride]
+        self,
+        name: str,
+        feedback: list[GradFeedback],
+        retrieved: dict[str, str] | None = None,
+        *,
+        expected_version: int | None = None,
+    ) -> None:
+        """Fold gradients into ``name``, checking ``expected_version`` against the current one when given."""
+        ...
+
+
 @dataclass(frozen=True)
 class GradFeedback:
     """One textual gradient plus the optional numeric score that accompanies it.

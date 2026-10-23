@@ -57,6 +57,33 @@ class ParameterHost(Protocol):
     def consolidate(self, name: str, feedback: list[GradFeedback], retrieved: dict[str, str] | None = None) -> None: ...
 
 
+@runtime_checkable
+class VersionedParameterHost(ParameterHost, Protocol):
+    """A ``ParameterHost`` whose parameters carry a version, so a stale write can be detected.
+
+    The optional seam a host opts into by having ``load``. A view such a host hands out records
+    the version it read in ``meta["version"]``; the optimizer's ``consolidate`` passes the oldest
+    version the graph read back as ``expected_version``, and the host applies its own conflict
+    policy. A host without ``load`` is called with the plain ``ParameterHost`` signature. The
+    local parameter host (``experimental/params``) is the reference implementation.
+    """
+
+    def load(self, name: str) -> tuple[Any, int]:
+        """The current value and its version."""
+        ...
+
+    def consolidate(  # type: ignore[override]
+        self,
+        name: str,
+        feedback: list[GradFeedback],
+        retrieved: dict[str, str] | None = None,
+        *,
+        expected_version: int | None = None,
+    ) -> None:
+        """Fold gradients into ``name``, checking ``expected_version`` against the current one when given."""
+        ...
+
+
 @dataclass
 class Node:
     """Base class for all grad-bearing graph nodes."""
