@@ -61,6 +61,7 @@ Lean automatically; see [Verified](#verified) for native compilation setup.
 | Remember information and improve results from feedback       | [Memory](#memory) |
 | Choose models according to cost and expected success         | [Economics](#economics) |
 | Give an object AI methods and hand them to other agents      | [Methods](#methods) |
+| Lead a team of agents, review its answer, and bound its cost | [Teams](#teams) |
 | Use Claude Code or Kiro as a thread                          | [Integrations](#integrations) |
 | Verify the agent's work or compile a verified implementation | [Verified](#verified) |
 | Explore a larger learning loop or benchmark                  | [Projects](#projects) |
@@ -166,6 +167,16 @@ with a gate. See [the methods guide](../docs/methods.md).
 | --- | --- | --- |
 | [Analyst team](methods/analyst_team.py) | Call a method once, hand every method to an orchestrator as a typed tool, and keep one method on a live thread. | `uv run methods/analyst_team.py` |
 | [Gated proposer](methods/gated_proposer.py) | Check each proposal against a policy cap, retry with the gate's report, and filter one-shot proposals from forked threads. | `uv run methods/gated_proposer.py` |
+
+## Teams
+
+Put a lead AI function over a few live members it calls as typed tools, review
+the lead's answer with a hook, and run the team under a budget. See
+[the teams guide](../docs/teams.md).
+
+| Example | What it teaches | Run |
+| --- | --- | --- |
+| [Status desk](teams/status_desk.py) | Hold a method member and a function member as the lead's tools, send the first draft back with a hook, and read the transcript and the run's cost under a dollar budget. | `uv run teams/status_desk.py` |
 
 ## Integrations
 

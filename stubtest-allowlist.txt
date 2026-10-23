@@ -45,12 +45,17 @@ ai_functions.types.graph.Traceable
 # special form and reports it as "not a Union".
 ai_functions.runtime.coordinator_tools_core.SendMessageMode
 
+# ``UnknownCostPolicy = Literal["refuse", "estimate"]``: same Literal-alias false positive as
+# runtime.coordinator_tools_core.SendMessageMode.
+ai_functions.runtime.budget.UnknownCostPolicy
+
 # NewType creates functions at runtime; stubs declare them as classes (TypeInfo)
 ai_functions.types.ids.EventId
 ai_functions.types.ids.MessageId
 ai_functions.types.ids.ThreadId
 ai_functions.types.ids.WorkerId
 ai_functions.experimental.economics.types.RecordId
+ai_functions.experimental.teams.types.RunId
 
 # pydantic mangles __context in model_post_init; not our concern
 ai_functions.ai_thread.postcondition.PostConditionResult.model_post_init

@@ -168,6 +168,16 @@ class OutputSpec[T]:
         )
 
 
+def _model_id(model: object) -> str | None:
+    """The ``model_id`` a Strands ``Model`` reports through ``get_config()``, or ``None`` when it reports none."""
+    get_config = getattr(model, "get_config", None)
+    if get_config is None:
+        return None
+    config: object = get_config()
+    model_id = config.get("model_id") if isinstance(config, dict) else None
+    return str(model_id) if model_id else None
+
+
 def _new_message_id() -> MessageId:
     return MessageId(f"msg-{uuid.uuid4().hex}")
 
@@ -513,8 +523,8 @@ class AIThread[**P, T](Thread):  # type: ignore[type-arg]
 
     # ── Internal pipeline steps ──
 
-    def _emit_usage(self, ctx: ThreadContext, usage: dict[str, Any]) -> None:
-        """Emit a ``TokenUsageEvent`` from a Strands usage dict."""
+    def _emit_usage(self, ctx: ThreadContext, usage: dict[str, Any], model: object = None) -> None:
+        """Emit a ``TokenUsageEvent`` from a Strands usage dict, naming the model's ``model_id`` when it has one."""
         ctx.on_event(
             TokenUsageEvent(
                 token_usage=TokenUsage(
@@ -523,6 +533,7 @@ class AIThread[**P, T](Thread):  # type: ignore[type-arg]
                     cache_read_tokens=usage.get("cacheReadInputTokens", 0),
                     cache_write_tokens=usage.get("cacheWriteInputTokens", 0),
                 ),
+                model=_model_id(model),
             )
         )
 
@@ -741,7 +752,7 @@ class AIThread[**P, T](Thread):  # type: ignore[type-arg]
                 raise
             finally:
                 # Emit this invoke's token usage on every exit — normal return or exception
-                self._emit_usage(ctx, dict(agent.event_loop_metrics.accumulated_usage or {}))
+                self._emit_usage(ctx, dict(agent.event_loop_metrics.accumulated_usage or {}), agent.model)
 
     def _build_agent(
         self,

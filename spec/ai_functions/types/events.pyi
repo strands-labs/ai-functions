@@ -345,6 +345,11 @@ class TokenUsageEvent(BaseEvent):
 
     kind: Literal[EventKind.TOKEN_USAGE] = EventKind.TOKEN_USAGE
     token_usage: TokenUsage
+    model: str | None = None
+    """The id of the model that spent ``token_usage``, as the thread's provider names it; ``None`` when unknown.
+
+    A price table prices the usage by this id (:mod:`~ai_functions.runtime.prices`).
+    """
 
 
 # ── Result ──

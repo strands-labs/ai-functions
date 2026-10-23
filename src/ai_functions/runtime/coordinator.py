@@ -28,6 +28,7 @@ from ..types import (
     WorkerId,
 )
 from .errors import ThreadNotFoundError, WorkerLostError
+from .prices import PRICES, PriceTable
 
 if TYPE_CHECKING:
     from .worker import WorkerAdapter
@@ -121,6 +122,13 @@ class InMemoryCoordinator(Coordinator):
     Implements:
         Coordinator.
 
+    Args:
+        prices: The table that prices each ``TOKEN_USAGE`` event by the model
+            it names, for a caller that folds a run's usage into dollars (a
+            team totaling its run). :data:`~ai_functions.runtime.prices.PRICES`
+            by default; pass ``PRICES.with_prices({...})`` to add or correct a
+            model.
+
     Invariants:
         - I2 — sole sink for every event this coordinator serves.
         - I3 — per-thread pause signals are driven by ``TOKEN_USAGE``
@@ -128,6 +136,7 @@ class InMemoryCoordinator(Coordinator):
     """
 
     __slots__ = (
+        "_prices",
         "_workers",
         "_infos",
         "_events",
@@ -136,7 +145,8 @@ class InMemoryCoordinator(Coordinator):
         "_lost_workers",
     )
 
-    def __init__(self) -> None:
+    def __init__(self, *, prices: PriceTable = PRICES) -> None:
+        self._prices: PriceTable = prices
         self._workers: dict[WorkerId, WorkerAdapter] = {}
         self._infos: dict[ThreadId, ThreadInfo] = {}
         self._events: dict[ThreadId, list[Event]] = {}
@@ -145,6 +155,15 @@ class InMemoryCoordinator(Coordinator):
         # Threads orphaned by each lost worker, in the order they were failed.
         # Read by ``_adapter_for`` to name the loss in ``WorkerLostError``.
         self._lost_workers: dict[WorkerId, tuple[ThreadId, ...]] = {}
+
+    @property
+    def prices(self) -> PriceTable:
+        """The table this coordinator prices ``TOKEN_USAGE`` events with.
+
+        Read by a caller that folds usage itself and must price it the same way
+        every time, such as a team totaling its run.
+        """
+        return self._prices
 
     # ── Worker pool ─────────────────────────────────────────────────────────
 

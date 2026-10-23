@@ -474,6 +474,36 @@ def postmortem(incident: str) -> str:
 
 A method can also run on a live thread whose calls share history, have its proposals checked by a gate that runs as its post-condition, or read memory that the optimizer can update. See the [methods documentation](docs/methods.md) for details.
 
+## Teams
+
+The `ai_functions.experimental.teams` module puts a lead AI Function over a few live members. The lead holds every member as a typed tool and decides whom to ask, and each member keeps its own conversation across the lead's asks. Hooks add everything else, such as a review of the answer (see `examples/teams/status_desk.py`):
+
+```python
+from ai_functions.experimental.teams import Accept, FunctionMember, MethodMember, Revise, Team
+from ai_functions.runtime import Budget, Cost
+
+
+class HouseStyle:
+    def on_answer(self, work, answer):
+        if "Resolved at" in answer:
+            return Accept()
+        return Revise(feedback='End with the restore time as "Resolved at HH:MM UTC".', cap=2)
+
+
+team = Team(
+    status_update,
+    members=[
+        MethodMember(analyst, "timeline", ask_estimate=Cost(dollars=0.01)),
+        FunctionMember(check_claim, name="skeptic", ask_estimate=Cost(dollars=0.01)),
+    ],
+    hooks=[HouseStyle()],
+)
+run = await team.run("Payment errors on checkout this morning; the issue is fixed.", budget=Budget(Cost(dollars=0.50)))
+print(run.answer)
+```
+
+A `Revise` sends the lead back to work with the feedback, and a revised answer goes back through every reviewer before it ships. The run's transcript records every member call and revision as a typed record, and `budget=` bounds what the run may spend in tokens, dollars or both, with each member reserving its `ask_estimate` before it's asked. See the [teams documentation](docs/teams.md) for details.
+
 ## Security
 
 Code execution is off by default. The `"local"` mode validates generated code with AST checks, restricts imports to the allowlist you pass in, and applies timeouts. But it is not a sandbox: it cannot stop resource exhaustion (an infinite loop, runaway memory allocation) and offers no process-level isolation. For production, run AI Functions inside a container or other isolated environment, which adds the process isolation and resource limits that `"local"` mode cannot provide. For untrusted input, use `"disabled"` mode.
