@@ -1,0 +1,366 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Skill inspection · AI Functions</title>
+<style>
+:root{color-scheme:light;--bg:#f5f5f1;--panel:#fff;--ink:#202c32;--muted:#6f7c82;--line:#e0e5e4;--blue:#235dd3;--mint:#16755d;--amber:#9c6219;--red:#aa4947}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+button,input,select{font:inherit}button,a,select{touch-action:manipulation}button{cursor:pointer;color:inherit;border:1px solid var(--line);border-radius:7px;background:white;padding:7px 12px}
+button:hover{border-color:#9cacb7;background:#f8fafb}button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid #a1bdec;outline-offset:2px}
+button.primary{background:var(--blue);color:white;border-color:var(--blue)}button:disabled{opacity:.5;cursor:default}select,input{min-width:0;background:white;border:1px solid var(--line);border-radius:6px;padding:7px 9px;color:inherit}
+a{color:var(--blue)}.muted{color:var(--muted)}.eyebrow{font-size:10px;font-weight:700;letter-spacing:1.8px;text-transform:uppercase;color:var(--muted)}
+header{padding:20px 28px 16px;display:flex;align-items:center;gap:22px;border-bottom:1px solid var(--line);background:#fff}
+.brand{width:34px;height:34px;display:grid;place-content:center;background:#e8eefb;border-radius:9px;color:var(--blue);font:bold 24px monospace}
+h1{font-size:23px;line-height:1.2;margin:3px 0;font-weight:640;letter-spacing:-.6px}h2{font-size:16px;margin:0;font-weight:650}h3{font-size:13px;margin:0}
+.header-title{flex:1}.session-title{font-size:13px;color:var(--muted);max-width:440px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pill{display:inline-block;border-radius:4px;padding:2px 6px;background:#edf1f4;color:#50636e;font-size:10px;font-weight:700;letter-spacing:.25px;text-transform:uppercase;white-space:nowrap}
+.pill.stored,.pill.confirmed,.pill.completed{background:#e7f5ed;color:var(--mint)}.pill.rejected,.pill.failed{background:#fbeceb;color:var(--red)}
+.pill.inferred,.pill.candidate,.pill.staged{background:#fff1d8;color:var(--amber)}.pill.running,.pill.accepted{background:#eaf0fc;color:var(--blue)}
+.transport{padding:12px 28px;display:flex;align-items:center;gap:12px;border-bottom:1px solid var(--line);background:#fbfcfa}
+.transport input{flex:1;accent-color:var(--blue);padding:0;height:5px}.transport select{padding:5px 7px}.sequence{min-width:145px;text-align:right;font:11px ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--muted)}
+.pipeline{margin:18px 28px;display:grid;grid-template-columns:repeat(5,1fr);gap:10px}.stage{position:relative;padding:12px 16px;background:white;border:1px solid var(--line);border-radius:8px;text-align:left;min-height:76px}
+.stage:not(:last-child):after{content:"→";position:absolute;right:-12px;top:25px;color:#a3aeb4;z-index:1;background:var(--bg);font-size:16px}.stage strong{font-size:19px;margin-right:7px;font-weight:600}.stage .label{font-size:11px;color:var(--muted);display:block}
+.stage.active{border-color:#87a7ec;background:#f7f9fe}.stage .number{font:10px ui-monospace,monospace;color:#9aa6ad;position:absolute;right:11px;top:10px}
+.workspace{display:grid;grid-template-columns:250px minmax(400px,1fr) minmax(340px,.8fr);gap:14px;margin:0 28px 14px;height:calc(100vh - 289px);min-height:420px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:9px;display:flex;flex-direction:column;min-width:0;overflow:hidden}
+.panel-head{padding:15px 16px;border-bottom:1px solid var(--line)}.row{display:flex;align-items:center;gap:8px}.spread{justify-content:space-between}
+.sidebar .panel-head{display:grid;gap:9px}.sidebar select,.sidebar input{width:100%;font-size:12px}.filters{display:flex;gap:4px}.filters button{flex:1;padding:4px;font-size:11px}.filters .selected{background:#eaf0fc;color:var(--blue);border-color:#c9d8fa}
+.skill-list{overflow:auto;flex:1;padding:7px}.skill-card{display:block;text-align:left;width:100%;padding:12px 10px;border:1px solid transparent;border-radius:6px;background:transparent;margin:2px 0}
+.skill-card.selected{background:#f0f5ff;border-color:#c8d8fa}.skill-card .slug{display:block;font-weight:600;font-size:12px;overflow-wrap:anywhere}.skill-card p{color:var(--muted);font-size:11px;line-height:1.45;margin:6px 0 9px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.skill-card .meta{display:flex;justify-content:space-between;align-items:center;font:10px ui-monospace,monospace;color:var(--muted)}.empty{padding:28px 20px;color:var(--muted);font-size:13px;line-height:1.7}.empty strong{display:block;color:var(--ink);margin-bottom:6px}
+.source-title{font-size:15px;overflow-wrap:anywhere;font-weight:650}.source-description{margin-top:7px;color:var(--muted);font-size:12px}.source-toolbar{padding:8px 14px;border-bottom:1px solid var(--line);background:#fcfdfa;display:flex;gap:8px;align-items:center}.source-toolbar select{flex:1;font-size:11px}.source-toolbar button{font-size:11px;padding:5px 8px}
+.source-verdict{font-size:11px;color:var(--muted);margin-top:8px}.scores{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:5px}.score{background:#f0f5f6;border:1px solid #e1e9e9;border-radius:4px;padding:3px 7px}.score strong{color:var(--ink);margin-left:5px}
+.source{overflow:auto;flex:1;padding:9px 0 22px;font:12px/1.75 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;tab-size:2}
+.source-line{display:flex;align-items:flex-start;min-height:22px;border-left:3px solid transparent}.source-line:hover{background:#f5f8fc}.source-line.highlight{background:#fff3d9;border-left-color:#cc922d}.source-line.anchor{background:#edf3ff;border-left-color:var(--blue)}
+.lineno{display:inline-block;text-align:right;flex:0 0 45px;padding-right:12px;color:#a6b1b7;user-select:none;border:0;background:transparent;border-radius:0;font:inherit;line-height:inherit}.line-text{white-space:pre-wrap;overflow-wrap:anywhere;padding-right:16px;min-width:0}
+.source-line.heading .line-text{color:#2863b2;font-weight:650}.source-line.frontmatter .line-text{color:#7a6790}.source-foot{border-top:1px solid var(--line);padding:7px 14px;font:10px ui-monospace,monospace;color:var(--muted)}
+.run-controls{padding:12px 14px;border-bottom:1px solid var(--line);display:grid;gap:8px}.run-controls select{width:100%;font-size:12px}.run-meta{font-size:11px;display:flex;flex-wrap:wrap;gap:7px;color:var(--muted)}
+.timeline{overflow:auto;flex:1;padding:12px 14px}.entry{border-left:2px solid #dce3e8;padding:0 0 17px 13px;position:relative;margin-left:4px}.entry:before{content:"";position:absolute;left:-5px;top:5px;width:8px;height:8px;border-radius:50%;background:#cad4da;border:2px solid white}
+.entry.load:before{background:var(--blue)}.entry.load{border-left-color:#b5caf4}.entry-head{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:10px;color:var(--muted)}
+.entry-title{font-size:12px;font-weight:600;overflow-wrap:anywhere;margin:4px 0}.entry pre{margin:7px 0;font:11px/1.55 ui-monospace,monospace;white-space:pre-wrap;overflow-wrap:anywhere;background:#f6f8f9;padding:9px;border-radius:5px;max-height:180px;overflow:auto}
+.entry details{font-size:11px;color:var(--muted)}.entry summary{cursor:pointer}.entry .match{display:block;text-align:left;width:100%;font-size:10px;color:var(--amber);background:#fff7e9;border-color:#efddba;margin-top:6px;padding:6px 8px}
+.entry .load-link{width:100%;text-align:left;font-size:11px;color:var(--blue);background:#eff5ff;border-color:#d1def7;padding:8px;margin:5px 0}
+.legend{font-size:10px;display:flex;gap:12px;align-items:center;padding:9px 14px;border-top:1px solid var(--line);color:var(--muted)}
+footer{margin:0 28px 10px;display:flex;justify-content:space-between;color:var(--muted);font-size:10px;gap:20px}.note{max-width:72%}.error{color:var(--red)}
+dialog{border:1px solid var(--line);border-radius:12px;width:min(1060px,90vw);max-height:85vh;padding:0;box-shadow:0 25px 100px #142b3c30;color:var(--ink)}
+dialog::backdrop{background:#142b3c55}.dialog-head{padding:17px 22px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center}.dialog-body{padding:20px;overflow:auto;max-height:70vh}
+.activity-row{border-bottom:1px solid var(--line);padding:12px 4px}.activity-row summary{cursor:pointer;display:flex;gap:14px;align-items:center}.activity-row .activity-kind{flex:1;font-weight:600;font-size:12px}
+.activity-row pre,.evidence pre{font:11px/1.6 ui-monospace,monospace;white-space:pre-wrap;overflow-wrap:anywhere;background:#f6f8f9;padding:12px;border-radius:6px}
+.task-context{padding:12px 16px;border-bottom:1px solid var(--line);background:#f7fafb}.task-input{font-size:12px;line-height:1.55;max-height:105px;overflow:auto;margin:5px 0 12px;white-space:pre-wrap;overflow-wrap:anywhere}
+.task-metrics{display:flex;gap:22px;flex-wrap:wrap}.task-metrics span{display:block;font-size:10px;color:var(--muted)}.task-metrics strong{font-size:18px;font-weight:650}
+.state-changes{margin:10px 0 0;border-left:3px solid #97a4b0;padding:6px 10px;font:12px/1.5 ui-monospace,monospace;white-space:pre-wrap;max-height:110px;overflow:auto;background:#eef1f4;color:#46545e}
+.source-views{display:flex;gap:3px;flex-shrink:0}.source-views button{padding:5px 8px}.source-views [aria-pressed=true]{color:var(--blue);background:#eaf0fc;border-color:#b5caf2}
+.source-toolbar{flex-wrap:wrap}.source-toolbar select{min-width:150px}
+.procedure-map{font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;padding:16px 18px}.procedure-intro{font-size:12px;color:var(--muted);margin:0 0 14px}
+.procedure-steps{list-style:none;padding:0;margin:0;display:grid;gap:12px}.procedure-step{border:1px solid #d6e0eb;background:#f7f9fc;border-radius:9px;padding:14px 16px;min-width:0;overflow-wrap:anywhere}
+.step-heading{display:flex;gap:11px;align-items:flex-start}.step-number{display:grid;place-content:center;width:28px;height:28px;flex:0 0 28px;border:1px solid #cbd8e7;background:#edf2f8;border-radius:7px;font:600 13px ui-monospace,monospace;color:#546b86}
+.step-title{border:0;background:none;padding:2px 0;text-align:left;font-size:14px;font-weight:650;line-height:1.5;color:inherit}.step-title:hover{background:none;text-decoration:underline}
+.step-text{margin:8px 0 0 39px;font-size:13px;line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere}.step-text code,.step-title code{font-size:.94em;background:#e8edf4;padding:1px 3px;border-radius:3px}
+.step-foot{margin:10px 0 0 39px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:11px}.step-source{border:0;background:none;color:var(--blue);padding:0;font:11px ui-monospace,monospace;text-decoration:underline;text-underline-offset:3px}
+.procedure-step.inspected{border-color:var(--blue);background:#edf3ff}.procedure-step.inferred{border-color:#d3a24a;background:#fff3d9}.procedure-step.inferred .step-number{background:#fff0ca;border-color:#d3a24a;color:var(--amber)}
+.step-evidence{font-size:11px;line-height:1.45;color:var(--amber);margin:8px 0 0 39px}.step-evidence strong{display:block}.match-evidence{margin:10px 0}.match-evidence>.eyebrow{color:var(--amber);margin:0 0 7px}.entry .procedure-step{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+.source-delivery{padding:8px 14px;background:#edf3ff;color:#2355a7;border-bottom:1px solid #cbdaf4;font-size:11px}.source-delivery[hidden]{display:none}
+.connection-note{font-size:11px;color:var(--muted);padding:8px 0}.legend{flex-wrap:wrap;gap:6px}
+.pill.confirmed{background:#eaf0fc;color:var(--blue)}.pill.environment{background:#edf0f3;color:#53616c}
+body.document .pipeline,body.document .transport,body.document .execution,body.document #learning-button,body.document #library,body.document #version,body.document #filters{display:none}
+body.document .workspace{grid-template-columns:250px minmax(0,1fr);height:calc(100vh - 140px);margin-top:18px}
+@media(min-width:1650px){.workspace{grid-template-columns:290px minmax(540px,1fr) 490px}.source{font-size:14px}.source-line{min-height:25px}.timeline{padding:16px 20px}.entry-title{font-size:13px}}
+@media(max-width:1100px){.workspace{grid-template-columns:220px minmax(350px,1fr);height:auto}.execution{grid-column:1/-1;height:480px}.source-panel,.sidebar{height:600px}.session-title{display:none}.pipeline{gap:6px}.stage{padding:10px}.stage strong{font-size:17px}header{flex-wrap:wrap}}
+@media(max-width:650px){header,.transport{padding:12px}.workspace{display:flex;flex-direction:column;margin:12px}.sidebar{height:300px}.source-panel{height:550px}.pipeline{margin:12px;grid-template-columns:repeat(2,1fr)}.stage:after{display:none}.sequence{min-width:70px}.transport{flex-wrap:wrap}footer{margin:12px}.note{max-width:none}}
+</style>
+</head>
+<body>
+<header>
+ <div class="brand" aria-hidden="true">≋</div>
+ <div class="header-title"><div class="eyebrow">AI Functions / Experimental</div><h1 id="page-title">Skill inspection</h1></div>
+ <div class="session-title" id="session-title">Waiting for a recording</div>
+ <span class="pill" id="mode">Archive</span>
+ <button id="learning-button">Learning log</button>
+ <a href="/api/export" download="skills-recording.json">Export recording ↗</a>
+</header>
+<div class="transport">
+ <button id="play" class="primary" aria-label="Replay recorded events">▶ Replay</button>
+ <button id="live" aria-label="Follow new capture events">Follow live</button>
+ <input id="seek" aria-label="Recording position" type="range" min="0" max="1" value="0">
+ <select id="speed" aria-label="Playback speed"><option value=".5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select>
+ <span class="sequence" id="sequence">0 / 0 events</span>
+</div>
+<div class="pipeline" id="pipeline" aria-label="Skill lifecycle"></div>
+<main class="workspace">
+ <aside class="panel sidebar">
+  <div class="panel-head"><div class="row spread"><h2>Procedures</h2><span id="skill-count" class="muted">0</span></div>
+   <select id="library" aria-label="Skill library"><option value="">All libraries</option></select>
+   <select id="version" aria-label="Library version"><option value="">All captured versions</option></select>
+   <input id="search" type="search" placeholder="Find a skill…" aria-label="Find a skill">
+   <div class="filters" id="filters"><button class="selected" data-filter="all">All</button><button data-filter="current">Current</button><button data-filter="rejected">Rejected</button></div>
+  </div>
+  <div class="skill-list" id="skill-list"></div>
+ </aside>
+ <section class="panel source-panel" aria-label="Skill source">
+  <div class="panel-head"><div class="row spread"><div class="source-title" id="source-title">A skill is a readable procedure</div><span id="source-status"></span></div><div class="source-description" id="source-description">Select a document to inspect its exact captured text.</div><div class="source-verdict" id="source-verdict"></div></div>
+  <div class="source-toolbar"><div class="source-views" aria-label="Skill display"><button id="blocks-view" aria-pressed="true">Procedure blocks</button><button id="raw-view" aria-pressed="false">Markdown source</button></div><select id="procedure" aria-label="Jump to procedure"><option value="">Sections &amp; instruction blocks</option></select><button id="evidence">Evidence &amp; metadata</button><button id="clear-lines">Clear highlight</button></div>
+  <div class="source-delivery" id="source-delivery" hidden></div>
+  <div class="source" id="source"><div class="empty"><strong>No document selected</strong>Captured candidates and stored skills will appear here, including rejected procedures.</div></div>
+  <div class="source-foot" id="source-foot">Line numbers identify the captured procedure source.</div>
+ </section>
+ <section class="panel execution" aria-label="Model execution">
+  <div class="panel-head row spread"><h2 id="execution-title">Model uses skills</h2><span id="run-count" class="muted">0 runs</span></div>
+  <div class="run-controls"><select id="run" aria-label="Recorded execution"><option value="">Select an execution</option></select><div class="run-meta" id="run-meta"></div></div>
+  <div class="task-context" id="task-context" hidden></div>
+  <div class="timeline" id="timeline"></div>
+  <div class="legend"><span><span class="pill confirmed" id="load-legend">Document loaded</span></span><span><span class="pill inferred">Step match · inferred</span></span><span><span class="pill environment">Environment output</span></span></div>
+ </section>
+</main>
+<footer><div class="note" id="note">The viewer shows recorded events. Line matches suggest a connection; they do not prove the model followed a step.</div><div id="clock">No model calls during playback</div></footer>
+<dialog id="dialog"><div class="dialog-head"><h2 id="dialog-title">Learning log</h2><button id="close-dialog" aria-label="Close details">Close ×</button></div><div class="dialog-body" id="dialog-body"></div></dialog>
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const esc = value => String(value ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const pretty = value => JSON.stringify(value, null, 2);
+const pill = (text, cls=text) => `<span class="pill ${esc(String(cls).toLowerCase())}">${esc(text)}</span>`;
+const formatTime = value => value ? new Date(value * 1000).toLocaleTimeString([], {hour12:false}) : "";
+const procedureLabel = skill => skill.draft?"Draft":skill.filename || "SKILL.md";
+let state = null, selectedSkill = "", selectedRun = "", filter = "all", lines = null, lineMethod = "anchor";
+let following = false, playing = false, replay = null, playbackTime = 0, lastTick = 0, currentPoint = -1, generation = 0;
+let sourceKey = "", timelineKey = "", focusKind = "", focusStage = "", focusDraft = false, currentSeq = null;
+let focusEntry = "";
+let sourceView = "blocks";
+const inlineText = value => esc(value).replace(/`([^`\n]+)`/g,"<code>$1</code>").replace(/\*\*([^*\n]+)\*\*/g,"<strong>$1</strong>");
+async function get(url) { const r = await fetch(url); if (!r.ok) throw Error(`Viewer request failed (${r.status})`); return r.json(); }
+function currentIds() {
+ const ids = new Set();
+ for (const [key, lib] of Object.entries(state.libraries)) {
+  if ($("library").value && $("library").value !== key) continue;
+  const version = $("version").value || String(lib.version);
+  for (const id of lib.versions[version] || []) ids.add(id);
+ }
+ return ids;
+}
+function selectOptions(element, items, first) {
+ const value = element.value;
+ const html = (first ? `<option value="">${esc(first)}</option>` : "") + items.map(([id,label])=>`<option value="${esc(id)}">${esc(label)}</option>`).join("");
+ if (element.innerHTML !== html) { element.innerHTML=html; element.value=value; }
+}
+function render() {
+ const documentOnly=state.session.mode==="Document inspection";
+ document.body.classList.toggle("document",documentOnly);
+ $("session-title").textContent = state.session.title || "Skillified AI Function";
+ $("mode").textContent = documentOnly ? "Document" : state.session.mode==="Synthetic sample" ? "Synthetic sample" : following ? "Live capture" : "Recorded";
+ $("mode").className = "pill " + (following ? "running" : "");
+ $("sequence").textContent = `${state.seq} / ${state.last_seq} events`;
+ $("seek").max=state.last_seq || 1; $("seek").value=state.seq;
+ $("clock").textContent = documentOnly ? "Source inspection · no model calls" : state.timestamp ? `${new Date(state.timestamp*1000).toLocaleDateString()} · ${formatTime(state.timestamp)} recorded` : "No model calls during playback";
+ $("note").textContent = state.session.note || "Observed: a successful load of this source revision. Inferred: an action shares words with an instruction; this does not prove the model followed it.";
+ selectOptions($("library"),Object.entries(state.libraries).map(([id,v])=>[id,v.name]),"All libraries");
+ const chosenLib=state.libraries[$("library").value];
+ const versions=chosenLib ? Object.keys(chosenLib.versions) : [...new Set(Object.values(state.libraries).flatMap(l=>Object.keys(l.versions)))];
+ selectOptions($("version"),versions.sort((a,b)=>Number(b)-Number(a)).map(v=>[v,`Library version ${v}`]),"All captured versions");
+ const skills=Object.values(state.skills), runs=Object.values(state.runs), rounds=Object.values(state.rounds);
+ const loads=runs.reduce((n,r)=>n+r.timeline.filter(t=>t.type==="load" && t.confirmed).length,0);
+ const stages=[
+  ["Recorded calls",runs.filter(r=>r.phase==="call").length,"Executions & outcomes","run"],
+  ["Induction",rounds.length,"Rounds & candidate sources","mining"],
+  ["Filtering",skills.filter(s=>s.verdict).length,"Quality, trials & decisions","gate"],
+  ["Library",currentIds().size,"Procedures in selected version","library"],
+  ["Skill loads",loads,"Confirmed document deliveries","load"]
+ ];
+ const active=/candidate\.(scored|evaluated|excluded)|gate|quality|trial/.test(focusKind+"."+focusStage)?"gate":/library/.test(focusKind)?"library":/mining|round|stage|draft|candidate/.test(focusKind)?"mining":/run/.test(focusKind)?"load":"run";
+ $("pipeline").innerHTML=stages.map(([label,n,sub,key],i)=>`<button class="stage ${key===active?"active":""}" data-stage="${key}"><span class="number">0${i+1}</span><span class="label">${label}</span><strong>${n}</strong><span class="muted" style="font-size:10px">${sub}</span></button>`).join("");
+ $("pipeline").querySelectorAll("button").forEach(b=>b.onclick=()=>showLearning(b.dataset.stage));
+ const ids=currentIds(), term=$("search").value.toLowerCase();
+ const shown=skills.filter(s=>(!$("library").value || s.library===$("library").value) && (!term || `${s.slug} ${s.description}`.toLowerCase().includes(term)) && (filter!=="current" || ids.has(s.id)) && (filter!=="rejected" || s.status==="rejected") && (!$("version").value || ids.has(s.id)));
+ $("skill-count").textContent=shown.length;
+ if (!state.skills[selectedSkill] && shown.length) selectedSkill=shown[0].id;
+ $("skill-list").innerHTML=shown.length ? shown.map(s=>`<button class="skill-card ${s.id===selectedSkill?"selected":""}" data-skill="${esc(s.id)}"><span class="slug">${esc(s.slug)}</span><p>${esc(s.description)}</p><span class="meta">${pill(ids.has(s.id)?"stored":s.status)}<span>${s.lines.length} lines · ${esc(s.fingerprint.slice(0,6))}</span></span></button>`).join("") : `<div class="empty"><strong>${skills.length?"No matching procedures":"The library starts empty"}</strong>${skills.length?"Change the filter to inspect other captured documents.":"Learning rounds will produce candidates. Their full text stays inspectable even if they are rejected."}</div>`;
+ $("skill-list").querySelectorAll("[data-skill]").forEach(b=>b.onclick=()=>chooseSkill(b.dataset.skill));
+ $("run-count").textContent=`${runs.length} runs`;
+ selectOptions($("run"),runs.map(r=>[r.id,`${r.phase || "run"} · ${r.function || r.arm || r.id.slice(0,18)} · ${r.status}${r.outcome==null?"":` (${Number(r.outcome).toFixed(2)})`}`]),"Select an execution");
+ if (!state.runs[selectedRun] && runs.length) selectedRun=runs[runs.length-1].id;
+ $("run").value=selectedRun;
+ renderSource();
+ renderRun();
+}
+function scrollSource() {
+ const selector=sourceView==="blocks"?".procedure-step.inferred, .procedure-step.inspected":lines?`.source-line[data-line="${lines[0]}"]`:null;
+ const target=selector?$("source").querySelector(selector):null;
+ if(target){const bounds=target.getBoundingClientRect(), container=$("source").getBoundingClientRect();$("source").scrollTop+=bounds.top-container.top-16;}
+ else $("source").scrollTop=0;
+}
+function chooseSkill(id, range=null, method="anchor") { selectedSkill=id;focusDraft=id.startsWith("draft-");lines=range;lineMethod=method;render();requestAnimationFrame(scrollSource); }
+function selectedEntry(run) { return run?.timeline.find(t=>t.id===focusEntry) || [...(run?.timeline || [])].reverse().find(t=>t.type==="action" || t.type==="load"); }
+function stepHTML(s, step, index, match=null, inspected=false) {
+ const raw=step.text.split("\n"), first=raw[0].replace(/^\s*\d+[.)]\s+/,""), named=first.match(/^\*\*(.+?)\*\*:?\s*(.*)$/);
+ const title=named?named[1]:first.replace(/^#{1,6}\s+/,""), body=[...(named?[named[2]]:[]),...raw.slice(1)].join("\n").trim();
+ const number=step.number || (raw[0].match(/^\s*(\d+)[.)]\s+/)?.[1]) || index+1;
+ const range={skill_id:s.id,line_start:step.line_start,line_end:step.line_end,method:match?"inferred":"anchor"};
+ const label=procedureLabel(s);
+ const location=`${label}:L${step.line_start}${step.line_end===step.line_start?"":`–L${step.line_end}`}`;
+ return `<article class="procedure-step ${match?"inferred":inspected?"inspected":""}" data-step="${esc(step.id)}"><div class="step-heading"><span class="step-number" aria-label="Step ${esc(number)}">${esc(number)}</span><button class="step-title" data-step-select="${esc(pretty(range))}">${inlineText(title)}</button></div>${body?`<div class="step-text">${inlineText(body)}</div>`:""}${match?`<div class="step-evidence"><strong>Possible step use · inferred</strong>${esc(match.basis || "This action shares words with this instruction.")}</div>`:""}<div class="step-foot"><button class="step-source" data-step-source="${esc(pretty(range))}" aria-label="Open ${esc(location)} in source">${esc(location)} ↗</button>${match?pill("Inferred","inferred"):inspected?pill("Selected for inspection","running"):""}</div></article>`;
+}
+function bindSteps(root) {
+ for(const button of root.querySelectorAll("[data-step-source],[data-step-select]"))button.onclick=()=>{
+  const range=JSON.parse(button.dataset.stepSource || button.dataset.stepSelect);
+  const entry=button.closest("[data-entry]");
+  if(entry)focusEntry=state.runs[selectedRun].timeline[Number(entry.dataset.entry)]?.id || "";
+  sourceView=button.dataset.stepSource?"raw":"blocks";chooseSkill(range.skill_id,[range.line_start,range.line_end],range.method);
+ };
+}
+function latestDraft() {
+ for(const event of [...state.activity].reverse()){
+  const draft=event.draft || event.drafts?.at(-1) || (event.kind==="draft.created"?event:null);
+  if(draft?.body)return {id:`draft-${event.seq}`,slug:`Draft · ${draft.name || "procedure"}`,description:draft.description || "",status:"draft",lines:draft.body.split("\n"),sections:[],steps:[],...event.draft_map,fingerprint:"",draft:true};
+ }
+ return null;
+}
+function renderSource() {
+ const s=(focusDraft?latestDraft():state.skills[selectedSkill]) || latestDraft();$("evidence").disabled=!s || !!s.draft;
+ $("source-delivery").hidden=true;
+ $("blocks-view").setAttribute("aria-pressed",String(sourceView==="blocks"));$("raw-view").setAttribute("aria-pressed",String(sourceView==="raw"));
+ $("source").classList.toggle("procedure-map",sourceView==="blocks");
+  if(!s){sourceKey="";$("source").innerHTML='<div class="empty"><strong>No skill documents yet</strong>Replay the learning round to see candidates emerge.</div>';$("source-title").textContent="A skill is a readable procedure";$("source-description").textContent="";$("source-status").innerHTML="";$("source-verdict").innerHTML="";$("source-foot").textContent="";selectOptions($("procedure"),[],"Sections & instruction blocks");return;}
+ $("source-title").textContent=s.slug;$("source-description").textContent=s.description;
+ $("source-status").innerHTML=pill(currentIds().has(s.id)?"stored":s.status);
+ const run=state.runs[selectedRun], active=selectedEntry(run);
+ const matches=(active?.matches || []).filter(m=>m.skill_id===s.id);
+ const loaded=run?.timeline.some(t=>t.confirmed && t.skill_id===s.id);
+ if(loaded){$("source-delivery").hidden=false;$("source-delivery").textContent=`Skill load confirmed · ${s.steps.length} blocks available to the model. Step use is inferred from action text.`;}
+ const verdict=s.verdict||{}, scores=verdict.scores || (verdict.score!=null?{quality:verdict.score,threshold:verdict.threshold}:{});
+ const measured=Object.entries(scores).filter(([k,v])=>typeof v==="number").slice(0,5);
+ const reason=verdict.rationale || verdict.reason || "";
+ $("source-verdict").innerHTML=(measured.length?`<div class="scores">${measured.map(([k,v])=>`<span class="score">${esc(k.replaceAll("_"," "))}<strong>${Number(v).toFixed(2)}</strong></span>`).join("")}</div>`:"")+esc(reason.length>240?reason.slice(0,240)+"…":reason);
+ selectOptions($("procedure"),[...s.sections.map(v=>[`${v.line_start}:${v.line_end}`,`${v.title} · L${v.line_start}–${v.line_end}`]),...s.steps.map((v,i)=>[`${v.line_start}:${v.line_end}`,`Step ${i+1}: ${v.title.slice(0,70)} · L${v.line_start}`])],"Sections & instruction blocks");
+  $("procedure").value=lines?`${lines[0]}:${lines[1]}`:"";
+ const key=JSON.stringify([s.id,lines,lineMethod,sourceView,matches]);
+ if(key!==sourceKey) {
+  sourceKey=key;
+  if(sourceView==="blocks"){
+   $("source").innerHTML=s.steps.length?`<p class="procedure-intro">One block per procedure step · document order. Source links below each block open its exact lines.${matches.length?" Amber blocks match the selected action by text similarity.":""}</p><ol class="procedure-steps">${s.steps.map((step,i)=>{
+    const match=matches.find(m=>m.line_start===step.line_start && m.line_end===step.line_end);
+    const selected=lines && lineMethod!=="inferred" && step.line_start<=lines[1] && step.line_end>=lines[0];
+    return `<li>${stepHTML(s,step,i,match,selected)}</li>`;
+   }).join("")}</ol>`:'<div class="empty"><strong>No procedure blocks found</strong>Open Markdown source to inspect the complete document.</div>';
+   bindSteps($("source"));
+  }else{
+  let front=s.lines[0]?.trim()==="---", delimiter=0;
+  $("source").innerHTML=s.lines.map((line,i)=>{
+   const inFront=front && delimiter<2;if(line.trim()==="---")delimiter++;
+   const highlight=lines && i+1>=lines[0] && i+1<=lines[1];
+   return `<div class="source-line ${inFront?"frontmatter":""} ${/^#{1,6} /.test(line)?"heading":""} ${highlight?(lineMethod==="inferred"?"highlight":"anchor"):""}" data-line="${i+1}"><button class="lineno" data-number="${i+1}" aria-label="Select line ${i+1}">${i+1}</button><span class="line-text">${esc(line)||" "}</span></div>`;
+  }).join("");
+  $("source").querySelectorAll("[data-number]").forEach(b=>b.onclick=()=>chooseSkill(s.id,[Number(b.dataset.number),Number(b.dataset.number)]));
+  }
+ }
+ $("source-foot").textContent=s.draft?`Recorded draft text · ${s.lines.length} lines · before SKILL.md formatting`:`${s.filename || "SKILL.md"} · ${s.lines.length} lines · SHA-256 ${s.fingerprint.slice(0,16)}${lines?` · L${lines[0]}–${lines[1]} (${lineMethod==="inferred"?"inferred match":"selected source"})`:""}`;
+}
+function renderRun() {
+ const run=state.runs[selectedRun];$("task-context").hidden=!run;if(!run){$("timeline").innerHTML='<div class="empty"><strong>No execution yet</strong>Recorded model messages and tool results appear here.</div>';$("run-meta").innerHTML="";timelineKey="";return;}
+  $("run-meta").innerHTML=`${pill(run.phase || "run")}${pill(run.status)}<span>${run.version==null?"Captured skill set":`Library v${esc(run.version)}`}</span><span>${run.skills.length} available</span><span>${run.timeline.filter(t=>t.confirmed).length} confirmed loads</span>${run.outcome==null?"":`<span>Outcome ${Number(run.outcome).toFixed(2)}</span>`}`;
+ const progress=run.progress||{}, inputs=run.inputs?.kwargs || run.inputs || {};
+ const task=progress.task_description || inputs.task_description || inputs.task || inputs.prompt || inputs.question || pretty(inputs);
+ const actions=run.timeline.filter(t=>t.type==="action").length;
+ const metrics=[["Available skills",run.skills.length],["Actions",progress.steps==null?actions:`${progress.steps}${progress.step_limit==null?"":` / ${progress.step_limit}`}`]];
+ if(progress.raw_score!=null)metrics.push(["Environment score",progress.raw_score]);
+ if(progress.done && typeof progress.passed==="boolean")metrics.push(["Task completion",progress.passed?"Passed":"Not completed"]);
+ else if(run.outcome!=null)metrics.push(["Scored outcome",Number(run.outcome).toFixed(2)]);
+ const changed=progress.changed_lines?.length ? progress.changed_lines : progress.observation_focus;
+ const observationLabel=progress.observation_unchanged ? "Environment output · unchanged observation" : "Environment output · changed observation lines";
+ $("task-context").innerHTML=`<div class="eyebrow">Recorded task input</div><div class="task-input">${esc(typeof task==="string"?task:pretty(task))}</div><div class="task-metrics">${metrics.map(([label,value])=>`<div><span>${esc(label)}</span><strong>${esc(value)}</strong></div>`).join("")}</div>${changed?.length?`<div class="state-changes"><div class="eyebrow">${observationLabel}</div>${esc(changed.join("\n"))}</div>`:""}`;
+ const active=selectedEntry(run) || run.timeline.at(-1);
+ const key=JSON.stringify([run.id,run.timeline.length,run.timeline.at(-1),active?.id]);
+ if(key===timelineKey)return;timelineKey=key;
+ const stick=$("timeline").scrollHeight-$("timeline").scrollTop-$("timeline").clientHeight<80 || playing;
+ $("timeline").innerHTML=run.timeline.length ? run.timeline.map((t,i)=>{
+  const label=t.type==="load"?"Skill load":t.type==="action"?t.tool:t.type==="error"?"Error":"Model / prompt";
+  let text=t.arguments?.answer || t.text;
+  if(t.type==="message" && text.length>250) text=text.slice(0,250)+"…";
+  const related=(t.matches||[]).map(m=>{
+   const s=state.skills[m.skill_id], index=s?.steps.findIndex(step=>step.line_start===m.line_start && step.line_end===m.line_end);
+   return s && index>=0 ? `<div class="match-evidence"><div class="eyebrow">Action → procedure step · inferred</div>${stepHTML(s,s.steps[index],index,m)}</div>`:"";
+  }).join("");
+  const noMatch=t.type==="action" && !related && run.timeline.some(load=>load.confirmed && load.finished<=t.timestamp);
+  return `<article class="entry ${t.type} ${t===active?"focused":""}" data-entry="${i}"><div class="entry-head"><span>${esc(label)}</span><span>${formatTime(t.timestamp)}</span></div><div class="entry-title">${esc(text)}</div>${t.type==="load"?(t.confirmed?`<button class="load-link" data-load="${esc(t.skill_id)}">${pill("Document loaded","confirmed")} Procedure text received ↗<br>Loading confirms delivery; step use is inferred separately.</button>`:`${pill(t.status==="running"?"Requested":"Source unverified")} <span class="muted" style="font-size:10px">No confirmed source association yet</span>`):""}${related}${noMatch?`<div class="connection-note">Skill text is available · no step match for this action.</div>`:""}${t.result!=null?`<details ${t.type==="action" && t===active?"open":""}><summary>Recorded result · ${esc(t.status)}</summary><pre>${esc(t.result)}</pre></details>`:""}${t.type==="message"?`<details><summary>Full recorded message</summary><pre>${esc(t.text)}</pre></details>`:""}</article>`;
+ }).join("") : '<div class="empty">Waiting for recorded model events.</div>';
+ $("timeline").querySelectorAll("[data-load]").forEach(b=>b.onclick=()=>{sourceView="blocks";focusEntry=run.timeline[Number(b.closest("[data-entry]").dataset.entry)].id;chooseSkill(b.dataset.load);});
+ bindSteps($("timeline"));
+ if(stick)$("timeline").scrollTop=$("timeline").scrollHeight;
+}
+function showLearning(stage="") {
+ $("dialog-title").textContent="Learning log · recorded decisions";
+ const events=state.activity.filter(e=>!stage || stage==="run" || stage==="load" || e.kind.includes(stage) || e.stage===stage || (stage==="gate" && /candidate|trial|quality|baseline|gate/.test(e.kind)));
+ $("dialog-body").innerHTML=events.length?events.map(e=>`<details class="activity-row"><summary><span class="muted">#${e.seq}</span><span class="activity-kind">${esc(e.kind.replaceAll("."," · "))}${e.stage?` / ${esc(e.stage)}`:""}</span><span class="muted">${formatTime(e.timestamp)}</span>${pill(e.status || e.stage || e.phase || "fact")}</summary><pre>${esc(pretty(e))}</pre></details>`).join(""):'<div class="empty">No matching events at this recording position.</div>';
+ $("dialog").showModal();
+}
+function showEvidence() {
+ const s=state.skills[selectedSkill];if(!s)return;
+ const uses=Object.values(state.runs).flatMap(r=>r.timeline.filter(t=>t.confirmed && t.skill_id===s.id).map(t=>({run:r.id,phase:r.phase,loaded_at:formatTime(t.finished),outcome:r.outcome})));
+ const provenance=new Set(s.frontmatter.metadata?.trajectory_ids || s.source_call_ids || []);
+ const sources=Object.values(state.runs).filter(r=>provenance.has(r.record?.call_id));
+ $("dialog-title").textContent=`Evidence · ${s.slug}`;
+ $("dialog-body").innerHTML=`<div class="evidence"><h3>Decision and scores</h3><pre>${esc(pretty(s.verdict || {status:s.status}))}</pre>${sources.length?`<h3>Source executions</h3><div class="row">${sources.map(r=>`<button data-source-run="${esc(r.id)}">${esc(r.function || r.id)} · outcome ${esc(r.outcome)}</button>`).join("")}</div>`:""}<h3>Confirmed loads of this exact revision</h3><pre>${esc(pretty(uses))}</pre><h3>Source metadata and supporting files</h3><pre>${esc(pretty({frontmatter:s.frontmatter,source_call_ids:s.source_call_ids,resources:s.resources,fingerprint:s.fingerprint}))}</pre><p class="muted">A load confirms delivery of the document. Instruction-line associations are inferred from tool action text.</p></div>`;
+ $("dialog-body").querySelectorAll("[data-source-run]").forEach(b=>b.onclick=()=>{selectedRun=b.dataset.sourceRun;$("dialog").close();render();});
+ $("dialog").showModal();
+}
+async function seek(seq=null, focus={}) {
+ const request=++generation;
+ const next=await get(`/api/state${seq==null?"":`?seq=${Math.floor(seq)}`}`);
+ if(request!==generation)return;
+ if(state && next.seq<state.seq){selectedSkill="";selectedRun="";lines=null;}
+ state=next;currentSeq=seq;
+ if(focus.kind)lines=null;
+ focusEntry=focus.entry_id || "";
+ focusKind=focus.kind || state.activity.at(-1)?.kind || "";
+ focusStage=focus.stage || state.activity.at(-1)?.stage || "";
+ focusDraft=focusKind==="draft.created" || (focusKind==="stage.finished" && ["extract","merge"].includes(focus.stage || state.activity.at(-1)?.stage));
+ if(focus.run_id && state.runs[focus.run_id])selectedRun=focus.run_id;
+ if(focus.skill_id && state.skills[focus.skill_id])selectedSkill=focus.skill_id;
+ if(focus.source_view)sourceView=focus.source_view==="raw"?"raw":"blocks";
+ const run=state.runs[selectedRun];
+ if(focus.run_id && run){
+  lines=null;
+  const latest=run.timeline.find(t=>t.id===focusEntry) || [...run.timeline].reverse().find(t=>t.type==="action" || t.type==="load");
+  const match=latest?.matches?.[0];
+  const load=[...run.timeline].reverse().find(t=>t.confirmed);
+  if(focus.kind?.startsWith("run.") && match && (!focus.skill_id || focus.skill_id===match.skill_id)){selectedSkill=match.skill_id;lines=[match.line_start,match.line_end];lineMethod="inferred";}
+  else if(load && !focus.skill_id && focus.kind?.startsWith("run.")){selectedSkill=load.skill_id;lines=null;}
+ }
+ render();
+ if(focus.skill_id || focus.run_id || focusDraft)requestAnimationFrame(()=>{
+  scrollSource();
+  if(focus.block_line && sourceView==="blocks"){
+   const block=$("source").querySelector(`[data-step="L${Number(focus.block_line)}"]`);
+   if(block)$("source").scrollTop+=block.getBoundingClientRect().top-$("source").getBoundingClientRect().top-16;
+  }
+ });
+ window.skillsViz.ready=true;
+ window.skillsViz.status={seq:state.seq,last_seq:state.last_seq,playing};
+ await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+}
+function pause(){playing=false;$("play").textContent="▶ Replay";}
+async function tick(now) {
+ if(!playing)return;
+ if(lastTick)playbackTime+=(now-lastTick)/1000*Number($("speed").value);lastTick=now;
+ const index=Math.max(0,replay.points.findIndex(p=>playbackTime<p.at+p.duration));
+ if(playbackTime>=replay.duration){await seek(replay.last_seq);pause();window.skillsViz.status.finished=true;return;}
+ if(index!==currentPoint){currentPoint=index;const point=replay.points[index];await seek(point.seq,point);}
+ requestAnimationFrame(tick);
+}
+$("play").onclick=async()=>{if(playing){pause();return;}following=false;replay=await get("/api/replay");if(!replay.points.length)return;playing=true;playbackTime=0;lastTick=0;currentPoint=-1;$("play").textContent="Ⅱ Pause";requestAnimationFrame(tick);};
+$("live").onclick=()=>{pause();following=true;seek();};
+$("seek").oninput=()=>{pause();following=false;seek(Number($("seek").value));};
+$("search").oninput=()=>state&&render();$("library").onchange=()=>{$("version").value="";render();};$("version").onchange=()=>render();
+$("filters").querySelectorAll("button").forEach(b=>b.onclick=()=>{filter=b.dataset.filter;$("filters").querySelectorAll("button").forEach(x=>x.classList.toggle("selected",x===b));render();});
+$("run").onchange=()=>{selectedRun=$("run").value;focusEntry="";lines=null;timelineKey="";render();};
+$("procedure").onchange=()=>{if($("procedure").value){const range=$("procedure").value.split(":").map(Number), s=state.skills[selectedSkill] || latestDraft();if(!s)return;if(!s.steps.some(step=>step.line_start===range[0] && step.line_end===range[1]))sourceView="raw";chooseSkill(s.id,range);}};
+$("blocks-view").onclick=()=>{sourceView="blocks";render();requestAnimationFrame(scrollSource);};
+$("raw-view").onclick=()=>{sourceView="raw";render();requestAnimationFrame(scrollSource);};
+$("clear-lines").onclick=()=>chooseSkill(selectedSkill);
+$("learning-button").onclick=()=>showLearning();$("evidence").onclick=showEvidence;$("close-dialog").onclick=()=>$("dialog").close();
+window.skillsViz={ready:false,status:{},seek,pause};
+seek().catch(e=>{$("note").classList.add("error");$("note").textContent=e.message;});
+setInterval(()=>{if(following&&!playing)seek().catch(e=>{$("note").textContent=e.message;});},1000);
+</script>
+</body>
+</html>

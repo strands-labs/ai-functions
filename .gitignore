@@ -29,3 +29,4 @@ examples/workflows/multiagent_report.md
 examples/workflows/stock_report.html
 forecast_memory.json
 .lake/
+examples/skillify_demo/out-*/

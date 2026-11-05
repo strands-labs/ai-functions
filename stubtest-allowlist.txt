@@ -99,6 +99,8 @@ ai_functions.experimental.economics.beliefs.ForecastResult
 ai_functions.experimental.economics.types.Candidate.__type_params__
 ai_functions.experimental.economics.function.EconomicFunction.__type_params__
 ai_functions.experimental.economics.function.EconomicThread.__type_params__
+ai_functions.experimental.skills.skillify.SkillifiedFunction.__type_params__
+ai_functions.experimental.skills.skillify.SkillifiedThread.__type_params__
 
 # debug.py is an opt-in console dump of the exact per-model-call request,
 # gated on the AI_FUNCTIONS_SHOW_PROMPTS env var and imported lazily inside

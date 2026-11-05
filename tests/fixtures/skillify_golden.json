@@ -1,0 +1,42 @@
+{
+  "skills": [
+    {
+      "name": "skill-a",
+      "body": "## Overview\nASSISTANT:-sorted-the-list-preserve: Description for ASSISTANT:-sorted-the-list preserve.\n\n## When to use this skill\nUse this when the described situation arises.\n\n## Instructions\nstep0 step1 step2 step3 step4 step5 step6 step7 step8 step9 step10 step11 step12 step13 step14 step15 step16 step17 step18 step19 step20 step21 step22 step23 step24 step25 step26 step27 step28 step29 step30 step31 step32 step33 step34 step35 step36 step37 step38 step39 step40 step41 step42 step43 step44\n"
+    },
+    {
+      "name": "skill-b",
+      "body": "## Overview\nASSISTANT:-gave-up-on-the-parser-preserve: Description for ASSISTANT:-gave-up-on-the-parser preserve.\n\n## When to use this skill\nUse this when the described situation arises.\n\n## Instructions\nstep0 step1 step2 step3 step4 step5 step6 step7 step8 step9 step10 step11 step12 step13 step14 step15 step16 step17 step18 step19 step20 step21 step22 step23 step24 step25 step26 step27 step28 step29 step30 step31 step32 step33 step34 step35 step36 step37 step38 step39 step40 step41 step42 step43 step44\n"
+    },
+    {
+      "name": "skill-c",
+      "body": "## Overview\nASSISTANT:-gave-up-on-the-parser-repair: Description for ASSISTANT:-gave-up-on-the-parser repair.\n\n## When to use this skill\nUse this when the described situation arises.\n\n## Instructions\nstep0 step1 step2 step3 step4 step5 step6 step7 step8 step9 step10 step11 step12 step13 step14 step15 step16 step17 step18 step19 step20 step21 step22 step23 step24 step25 step26 step27 step28 step29 step30 step31 step32 step33 step34 step35 step36 step37 step38 step39 step40 step41 step42 step43 step44\n"
+    },
+    {
+      "name": "skill-d",
+      "body": "## Overview\nASSISTANT:-fixed-the-off-by-one-preserve: Description for ASSISTANT:-fixed-the-off-by-one preserve.\n\n## When to use this skill\nUse this when the described situation arises.\n\n## Instructions\nstep0 step1 step2 step3 step4 step5 step6 step7 step8 step9 step10 step11 step12 step13 step14 step15 step16 step17 step18 step19 step20 step21 step22 step23 step24 step25 step26 step27 step28 step29 step30 step31 step32 step33 step34 step35 step36 step37 step38 step39 step40 step41 step42 step43 step44\n"
+    }
+  ],
+  "verdicts": [
+    {
+      "name": "skill-a",
+      "admitted": true,
+      "gain": 0.6666666666666667
+    },
+    {
+      "name": "skill-b",
+      "admitted": false,
+      "gain": 0.0
+    },
+    {
+      "name": "skill-c",
+      "admitted": true,
+      "gain": 0.16666666666666669
+    },
+    {
+      "name": "skill-d",
+      "admitted": true,
+      "gain": 0.3333333333333333
+    }
+  ]
+}
