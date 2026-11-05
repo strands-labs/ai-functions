@@ -23,6 +23,7 @@ Because AI Functions *are* functions, developers can construct agentic workflows
 - [Events and observability](#events-and-observability)
 - [Memory and optimization](#memory-and-optimization)
 - [Economics-aware execution](#economics-aware-execution)
+- [Skills that learn from calls](#skills-that-learn-from-calls)
 - [Distributed operation](#distributed-operation)
 - [Running agents across processes](#running-agents-across-processes)
 - [Going further](#going-further)
@@ -1200,6 +1201,28 @@ result = await solve(clauses=clauses, n_vars=8)   # called like any AI Function
 `@routed` stacks on an ordinary `@ai_function`, routing each call across several models. `value` is what a verified success is worth in dollars; `models` are the candidates, each pairing a model with its token prices; and the post-conditions define success. Each call starts from per-candidate estimates (the chance of passing and expected cost), tries the most profitable candidate, returns its result if it passes, switches if it fails, and abstains when no candidate is worth its cost.
 
 See the [economics documentation](economics.md) for more details, including alternative search policies, estimation via learned/custom beliefs, and adaptive stopping on graded tasks. Note: the module is experimental — the API may change in future releases.
+
+## Skills that learn from calls
+
+A skill is an ability — a function from data to decisions that improves with experience because it depends on memory experience can change — and an AI Function is one. The `ai_functions.experimental.skills` module improves it by growing its procedural memory, a library of reusable procedures mined from the function's own calls; each is stored as a `SKILL.md` file, which is why the API calls them skills. One rule governs every change to the library: **a procedure is published only if replaying recorded calls with it completes more of them than replaying them without it**.
+
+```python
+from ai_functions.experimental.skills import skillify
+
+
+@skillify(library="skills/solve", replay=True)   # replay=True: the function's tools are safe to re-run
+@ai_function(post_conditions=[check_sat])
+def solve(clauses: str, n_vars: int) -> Assignment:
+    """Find a satisfying assignment for this 3-SAT formula over variables x1..x{n_vars}.
+
+    {clauses}"""
+
+result = await solve(clauses=clauses, n_vars=8)   # called like any AI Function
+```
+
+`@skillify` stacks on an ordinary `@ai_function`. Each call runs with the current library, shown to the agent as an index plus a `Skill` tool it can load from, and is recorded with its outcome from the post-conditions. Every `every` calls a background round mines candidate skills from the recorded calls, replays recorded calls with and without each candidate, and publishes a new library version with the ones that help; the caller never waits. `refresh_skills()` runs a round now, `skills` and `history()` show what was learned, and `rollback_skills()` returns to an earlier version.
+
+See the [skills documentation](skills.md) for more details, including custom miners and gates, stateful tools via `environment=`, and optimizing skills as graph parameters. Note: the module is experimental — the API may change in future releases.
 
 ## Distributed operation
 

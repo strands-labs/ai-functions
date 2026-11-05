@@ -1,0 +1,73 @@
+{
+  "verdicts": [
+    {
+      "name": "skill-a",
+      "admitted": true,
+      "gain": 0.5,
+      "stage": "trial"
+    },
+    {
+      "name": "skill-b",
+      "admitted": false,
+      "gain": null,
+      "stage": "prefilter"
+    },
+    {
+      "name": "skill-c",
+      "admitted": false,
+      "gain": null,
+      "stage": "budget"
+    },
+    {
+      "name": "skill-d",
+      "admitted": false,
+      "gain": null,
+      "stage": "budget"
+    }
+  ],
+  "cut": [
+    "skill-c",
+    "skill-d"
+  ],
+  "decision_order": [
+    "skill-b",
+    "skill-c",
+    "skill-d",
+    "skill-a"
+  ],
+  "budget_cuts": [
+    "candidate skill-c (tier1 0.79)",
+    "candidate skill-d (tier1 0.89)",
+    "trial input call-2"
+  ],
+  "extra_calls": 8,
+  "rendered": {
+    "skill-a": {
+      "stage": "trial",
+      "scores": {
+        "tier1": 0.9466666666666667,
+        "with_skill": 1.0,
+        "without_skill": 0.5,
+        "gain": 0.5
+      }
+    },
+    "skill-b": {
+      "stage": "prefilter",
+      "scores": {
+        "tier1": 0.4666666666666666
+      }
+    },
+    "skill-c": {
+      "stage": "budget",
+      "scores": {
+        "tier1": 0.7866666666666666
+      }
+    },
+    "skill-d": {
+      "stage": "budget",
+      "scores": {
+        "tier1": 0.8933333333333334
+      }
+    }
+  }
+}
